@@ -160,6 +160,29 @@ prompt file is missing from the deploy, and zips the *contents* of `_deploy/Agen
 The version defaults to the `project(AgencyEngine VERSION ...)` line in `CMakeLists.txt`, so the archive name can't
 drift from what the DLL reports to SKSE.
 
+## Cutting a release
+
+```powershell
+pwsh -File release.ps1 0.2.0 -DryRun    # every check, no writes
+pwsh -File release.ps1 0.2.0            # bump, build, tag, publish
+```
+
+`release.ps1` rewrites the version in `CMakeLists.txt`, builds and packages, commits the bump, tags it, pushes, and
+creates the GitHub release with the archive attached. `CMakeLists.txt` is the single source of truth, so the version
+SKSE reports, the git tag and the archive filename are the same by construction rather than by discipline.
+
+The build happens locally, not on a runner, because compiling needs SkyrimNet's `CppAPI/PublicAPI.h` — that header
+ships with the SkyrimNet mod and isn't vendored here, so CI has no way to obtain it. `gh` is used only to publish.
+
+Before anything is written it refuses to proceed on a dirty tree, a branch other than `main`, a local `main` behind
+`origin`, or a tag that already exists. It also checks the two things that fail *after* publishing rather than
+during: that no `.psc` is newer than its committed `.pex` (which surfaces in-game as "function not registered", not
+as a build error), and that no `.pex` header carries the compiling machine's username or hostname — the Bethesda
+compiler writes both into every `.pex` and has no flag to suppress it, so a rebuild silently reintroduces them.
+
+A failed build restores `CMakeLists.txt`, and a failed tag push deletes the local tag, so an aborted run leaves
+nothing half-done to clean up by hand.
+
 ## What gets installed
 
 ```
