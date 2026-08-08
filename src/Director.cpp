@@ -247,8 +247,8 @@ namespace AgencyEngine::Director
         // prompt file asks it.
         struct LensChoice
         {
-            std::string name;    // empty in single-prompt mode
-            std::string prompt;  // never empty — always something to dispatch
+            std::string name;    // as typed in the UI; may be blank
+            std::string prompt;  // never empty — a tick with no usable lens holds
         };
 
         // ---- main thread -------------------------------------------------
@@ -891,20 +891,21 @@ namespace AgencyEngine::Director
         // tick produces runs, and on the default two-game-hour interval a run
         // of four is most of an in-game day spent asking the same question.
         //
-        // Falls back to settings.promptName whenever there is nothing to pick
-        // from — lenses switched off, all weights zero, or every configured
-        // lens missing a prompt file name. A tick that fires with no prompt at
-        // all would be a silent no-op, which is worse than a general one.
+        // A lens needs a prompt file name and a weight above zero to be picked.
+        // With none usable there is nothing to ask, and the tick holds rather
+        // than dispatching — see HasUsableLens below, which is what the gate
+        // checks before we get here.
+        bool HasUsableLens(const Settings& settings)
+        {
+            return std::any_of(std::begin(settings.lenses), std::end(settings.lenses), [](const Lens& lens) {
+                return lens.weight > 0 && lens.prompt[0] != '\0';
+            });
+        }
+
         LensChoice PickLens(const Settings& settings)
         {
             static std::mt19937 rng{ std::random_device{}() };
             static std::string  previous;
-
-            const LensChoice fallback{ {}, settings.promptName };
-
-            if (!settings.useLenses) {
-                return fallback;
-            }
 
             std::vector<const Lens*> eligible;
             int totalWeight = 0;
@@ -913,13 +914,6 @@ namespace AgencyEngine::Director
                     eligible.push_back(&lens);
                     totalWeight += lens.weight;
                 }
-            }
-
-            if (eligible.empty()) {
-                logger::warn("Lenses are on but none is usable (needs a prompt name and a weight above zero) — "
-                             "falling back to '{}'",
-                             settings.promptName);
-                return fallback;
             }
 
             // Drop the previous lens only when something else could be chosen.
@@ -978,7 +972,7 @@ namespace AgencyEngine::Director
             // SkyrimNet's UI to point impulses at a cheaper model.
             logger::info("Asking the {} question — prompt '{}' (variant '{}'), context {} bytes, {} follower(s), "
                          "delivery '{}'",
-                         lens.name.empty() ? "general" : lens.name, lens.prompt, kLLMVariant, contextJson.size(),
+                         lens.name.empty() ? "unnamed" : lens.name, lens.prompt, kLLMVariant, contextJson.size(),
                          roster.size(), delivery == kDirectNarration ? "direct-narration" : "persistent-event");
 
             if (player.uuid == 0) {
@@ -1854,6 +1848,13 @@ namespace AgencyEngine::Director
                     } else if (WithinResumeSettle()) {
                         hold = "impulse is due but the player has only just come back — letting the game settle";
                     }
+                }
+
+                // Checked here rather than with the interval gates so it covers
+                // the manual trigger too: the UI button bypasses gating, but
+                // there is still no prompt to send.
+                if (hold.empty() && !HasUsableLens(settings)) {
+                    hold = "no lens is usable — each needs a prompt file name and a weight above zero";
                 }
 
                 if (hold.empty() && !SkyrimNetAPI::IsMemorySystemReady()) {

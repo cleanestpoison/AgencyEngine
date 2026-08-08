@@ -348,14 +348,13 @@ namespace AgencyEngine::UI
 
         void RenderLensesTab(Settings& s, bool& dirty, const std::vector<LensTally>& tallies)
         {
-            dirty |= ImGui::Checkbox("Ask a different question on different ticks", &s.useLenses);
-            HelpMarker("Each lens is a prompt that inherits agencyengine_impulse_base.prompt and asks for one\n"
-                       "kind of thing. The chosen lens never repeats twice running while another is\n"
-                       "available, so weights set the long-run mix rather than each individual tick.");
+            Note("Every impulse is asked through a lens: a prompt that inherits "
+                 "agencyengine_impulse_base.prompt and asks for one kind of thing. The chosen lens never "
+                 "repeats twice running while another is available, so weights set the long-run mix rather "
+                 "than each individual tick.");
             Note("Weight 0 disables a lens outright - which is also how you switch off a lens whose prompt "
                  "needs a mod you do not have installed.");
 
-            ImGui::BeginDisabled(!s.useLenses);
             int total = 0;
             for (const auto& lens : s.lenses) {
                 if (lens.prompt[0] != '\0') {
@@ -420,14 +419,11 @@ namespace AgencyEngine::UI
                 }
                 ImGui::EndTable();
             }
-            ImGui::EndDisabled();
 
-            ImGui::SeparatorText("Fallback");
-            dirty |= ImGui::InputText("General prompt", s.promptName, sizeof(s.promptName));
-            HelpMarker("Resolves to Data/SKSE/Plugins/SkyrimNet/prompts/<name>.prompt\n"
-                       "Used when lenses are off, or when every lens above is weighted 0.");
-            if (s.useLenses && total <= 0) {
-                ImGui::TextColored(kWarn, "%s", "Every lens is weighted 0 - the general prompt is in use.");
+            HelpMarker("Each prompt file resolves to Data/SKSE/Plugins/SkyrimNet/prompts/<name>.prompt");
+            if (total <= 0) {
+                ImGui::TextColored(kWarn, "%s",
+                                   "Every lens is weighted 0 - there is nothing to ask, so no impulse fires.");
             }
         }
 

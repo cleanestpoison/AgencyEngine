@@ -20,10 +20,6 @@ namespace AgencyEngine
 
     std::string Settings::LensSummary() const
     {
-        if (!useLenses) {
-            return std::format("off (single prompt '{}')", promptName);
-        }
-
         std::string out;
         for (const auto& lens : lenses) {
             if (lens.weight <= 0 || lens.prompt[0] == '\0') {
@@ -35,10 +31,10 @@ namespace AgencyEngine
             out += std::format("{}({})={}", lens.name, lens.prompt, lens.weight);
         }
         // Worth spelling out rather than logging an empty list: every lens
-        // weighted to zero is a valid configuration that silently behaves like
-        // useLenses=false, and that is exactly the sort of thing someone reads
-        // their own log to discover.
-        return out.empty() ? std::format("on, but every lens is weighted 0 — falling back to '{}'", promptName) : out;
+        // weighted to zero is a valid configuration that stops the loop
+        // entirely, and that is exactly the sort of thing someone reads their
+        // own log to discover.
+        return out.empty() ? std::string{ "none usable — every lens is weighted 0" } : out;
     }
 
     std::string Settings::Summary() const
@@ -46,7 +42,7 @@ namespace AgencyEngine
         return std::format(
             "enabled={} interval={:.0f} in-game min delivery={} generateThought={} requireFollower={} "
             "skipInCombat={} playerEvents={} perFollowerEvents={} forcedImpulseChance={}% eventFilter='{}' "
-            "prompt='{}' lenses=[{}] "
+            "lenses=[{}] "
             "deferOnConversation={} quiet={:.0f}s maxDefer={:.0f}s onExpiry={} injectQuietGap={} poll={:.1f}s "
             "verboseLog={} combatContinuousMode={} continuousExitGrace={:.0f}s pendingBioInjection={} "
             "pendingTtl={:.0f} in-game min pendingResolve={:.0f} in-game min "
@@ -54,7 +50,7 @@ namespace AgencyEngine
             enabled, intervalGameMinutes,
             delivery == kDirectNarration ? "direct-narration" : "persistent-event", generateThought,
             requireFollower, skipInCombat, maxEvents, perFollowerEvents, forcedImpulseChance, eventTypeFilter,
-            promptName, LensSummary(),
+            LensSummary(),
             deferOnConversation, quietSeconds, maxDeferSeconds,
             degradeToPersistentEvent ? "persistent-event" : "drop", injectQuietGap, quietPollSeconds, debugLog,
             combatContinuousMode, continuousExitGraceSeconds, pendingBioInjection, pendingTtlGameMinutes,
@@ -104,7 +100,6 @@ namespace AgencyEngine
             degradeToPersistentEvent = j.value("degradeToPersistentEvent", degradeToPersistentEvent);
             injectQuietGap = j.value("injectQuietGap", injectQuietGap);
             quietPollSeconds = j.value("quietPollSeconds", quietPollSeconds);
-            useLenses = j.value("useLenses", useLenses);
             pendingBioInjection = j.value("pendingBioInjection", pendingBioInjection);
             pendingTtlGameMinutes = j.value("pendingTtlGameMinutes", pendingTtlGameMinutes);
             pendingResolveGameMinutes = j.value("pendingResolveGameMinutes", pendingResolveGameMinutes);
@@ -137,7 +132,6 @@ namespace AgencyEngine
                 }
             }
 
-            AssignBuffer(promptName, j.value("promptName", std::string{ promptName }));
             AssignBuffer(eventTypeFilter, j.value("eventTypeFilter", std::string{ eventTypeFilter }));
             AssignBuffer(followerEventTypeFilter,
                          j.value("followerEventTypeFilter", std::string{ followerEventTypeFilter }));
@@ -192,7 +186,6 @@ namespace AgencyEngine
                 { "degradeToPersistentEvent", degradeToPersistentEvent },
                 { "injectQuietGap", injectQuietGap },
                 { "quietPollSeconds", quietPollSeconds },
-                { "useLenses", useLenses },
                 { "pendingBioInjection", pendingBioInjection },
                 { "pendingTtlGameMinutes", pendingTtlGameMinutes },
                 { "pendingResolveGameMinutes", pendingResolveGameMinutes },
@@ -200,7 +193,6 @@ namespace AgencyEngine
                 { "ledgerSlots", ledgerSlots },
                 { "ledgerVeto", ledgerVeto },
                 { "lenses", std::move(lensArray) },
-                { "promptName", std::string{ promptName } },
                 { "eventTypeFilter", std::string{ eventTypeFilter } },
                 { "followerEventTypeFilter", std::string{ followerEventTypeFilter } },
             };

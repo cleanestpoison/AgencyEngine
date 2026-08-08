@@ -187,7 +187,6 @@ nothing half-done to clean up by hand.
 
 ```
 SKSE/Plugins/AgencyEngine.dll
-SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse.prompt              (general, used when lenses are off)
 SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_base.prompt         (the shared spine)
 SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_aspiration.prompt
 SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_relationship.prompt
@@ -201,9 +200,9 @@ variant means one place in SkyrimNet's UI to point impulse generation at a cheap
 The two SkyrimNet files sit exactly where SkyrimNet's own auto-discovery looks — the same layout the narrative
 engine uses, and the reason `statics/` mirrors the mod folder verbatim rather than being flattened at deploy time:
 
-- **`prompts/<name>.prompt`** — SkyrimNet resolves `SendCustomPromptToLLM("agencyengine_impulse", ...)` to
-  `Data/SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse.prompt`. No registration step, purely path-based, so the
-  file must land at that path and must not be overwritten by another mod.
+- **`prompts/<name>.prompt`** — SkyrimNet resolves `SendCustomPromptToLLM("agencyengine_impulse_aspiration", ...)` to
+  `Data/SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_aspiration.prompt`. No registration step, purely
+  path-based, so the files must land at those paths and must not be overwritten by another mod.
 - **`config/plugins/AgencyEngine/manifest.yaml`** — declares the `agencyengine_impulse` LLM *variant*, which is what
   lets you point impulse generation at a cheaper model than your dialogue model from inside SkyrimNet's own UI.
   Without it, impulses silently fall back to the default Dialogue LLM.
@@ -250,8 +249,8 @@ steady-state: the blurbs carry no timestamp and no delta, so they supply the *su
 per-lens spoken/quiet counters on the Status page are the readout — a lens that is silent 22 times out of 23 is an
 argument for tracked threads (tier 2), not for loosening its prompt.
 
-Turning lenses off falls back to `agencyengine_impulse.prompt`, the original general prompt, still shipped and still
-pointed at by the **Prompt name** setting — which is how you A/B a whole prompt against the lens set.
+There is no general prompt behind the lenses. Weighting every lens to 0 doesn't fall back to anything — it stops
+the loop, and the Status page says so rather than quietly asking a broader question.
 
 ## Tuning the impulse
 

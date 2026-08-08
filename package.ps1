@@ -92,9 +92,9 @@ $dll = Join-Path $modFolder 'SKSE\Plugins\AgencyEngine.dll'
 if (-not (Test-Path -LiteralPath $dll)) {
     throw "No AgencyEngine.dll in $modFolder — the build didn't deploy."
 }
-$prompt = Join-Path $modFolder 'SKSE\Plugins\SkyrimNet\prompts\agencyengine_impulse.prompt'
+$prompt = Join-Path $modFolder 'SKSE\Plugins\SkyrimNet\prompts\agencyengine_impulse_base.prompt'
 if (-not (Test-Path -LiteralPath $prompt)) {
-    throw "No agencyengine_impulse.prompt in $modFolder — the statics deploy didn't run."
+    throw "No agencyengine_impulse_base.prompt in $modFolder — the statics deploy didn't run."
 }
 
 Write-Host '==> Mod folder contents:' -ForegroundColor Cyan

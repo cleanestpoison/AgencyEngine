@@ -90,7 +90,7 @@ namespace AgencyEngine
         // rolled against `random` there rather than here — the roll has to be
         // suppressed mid-exchange, which the template already knows from
         // `tail_live`, and keeping both halves in one place is what stops them
-        // disagreeing. Applies to every lens and to the general prompt.
+        // disagreeing. Applies to every lens.
         //
         // 0 never forces (quietest, purely the model's judgement); 100 forces
         // every turn, and it shows — a forced impulse on a thin day is the
@@ -207,18 +207,14 @@ namespace AgencyEngine
         // and a log you have to grep.
         bool  debugLog = false;
 
-        // Ask a different focused question on different ticks, instead of the
-        // one general prompt. Off falls back to promptName below, unchanged —
-        // which is also how you A/B a whole prompt against the lens set.
-        bool  useLenses = true;
+        // Every impulse is asked through a lens; there is no general prompt
+        // behind them. Weighting them all to zero switches the loop off rather
+        // than falling back to anything, and the hold says so.
         Lens  lenses[kMaxLenses] = {
             { "Aspiration", "agencyengine_impulse_aspiration", 50 },
             { "Relationship", "agencyengine_impulse_relationship", 50 },
         };
 
-        // Used when useLenses is off, or when every lens has been weighted to
-        // zero. Kept as the general prompt it always was.
-        char  promptName[128] = "agencyengine_impulse";
         // Comma-separated SkyrimNet event types; empty = all.
         char  eventTypeFilter[192] = "";
         // The same, for the per-follower tail only. Separate from the one above
