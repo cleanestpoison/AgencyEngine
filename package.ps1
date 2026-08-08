@@ -58,13 +58,22 @@ if (-not $SkipBuild) {
 #
 # The deploy root matches CMakeUserPresets.json's SKYRIM_MODS_FOLDER; read it
 # from the preset rather than duplicating the path here.
+#
+# Only local-base carries an environment block, so a preset inheriting it has
+# no `environment` property at all. Probe PSObject.Properties rather than
+# dotting straight through: this script is also called from release.ps1, which
+# runs under Set-StrictMode -Latest, where a missing property is an error and
+# not $null.
 $presetFile = Join-Path $PSScriptRoot 'CMakeUserPresets.json'
 $userPresets = Get-Content $presetFile -Raw | ConvertFrom-Json
 $modsFolder = $null
 foreach ($name in @($Preset, 'local-base')) {
-    $entry = $userPresets.configurePresets | Where-Object { $_.name -eq $name }
-    if ($entry -and $entry.environment.SKYRIM_MODS_FOLDER) {
-        $modsFolder = $entry.environment.SKYRIM_MODS_FOLDER
+    $entry = $userPresets.configurePresets | Where-Object { $_.name -eq $name } | Select-Object -First 1
+    if (-not $entry) { continue }
+    if (-not $entry.PSObject.Properties['environment']) { continue }
+    $block = $entry.environment
+    if ($block -and $block.PSObject.Properties['SKYRIM_MODS_FOLDER']) {
+        $modsFolder = $block.SKYRIM_MODS_FOLDER
         break
     }
 }

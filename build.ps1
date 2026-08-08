@@ -63,17 +63,32 @@ if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
 # Launch-VsDevShell clobbers VCPKG_ROOT if VS bundles its own vcpkg. The preset
 # carries the right value for cmake itself, but re-pin it here so any native
 # cmake/vcpkg call in this session agrees.
+# Walking the inherits chain by hand: only local-base carries an environment
+# block, so a preset that inherits it has no `environment` property at all.
+# Probing PSObject.Properties rather than dotting straight through, because
+# this script is also called from release.ps1, which runs under
+# Set-StrictMode -Latest — and strict mode makes a missing property an error
+# rather than $null.
+function Get-PresetEnvValue {
+    param($Presets, [string[]]$Chain, [string]$Key)
+
+    foreach ($name in $Chain) {
+        $entry = $Presets.configurePresets | Where-Object { $_.name -eq $name } | Select-Object -First 1
+        if (-not $entry) { continue }
+        if (-not $entry.PSObject.Properties['environment']) { continue }
+        $block = $entry.environment
+        if ($block -and $block.PSObject.Properties[$Key]) {
+            return $block.$Key
+        }
+    }
+    return $null
+}
+
 $presetFile = Join-Path $PSScriptRoot 'CMakeUserPresets.json'
 if (Test-Path $presetFile) {
     $userPresets = Get-Content $presetFile -Raw | ConvertFrom-Json
-    $chain = @($Preset, 'local-base')
-    foreach ($name in $chain) {
-        $entry = $userPresets.configurePresets | Where-Object { $_.name -eq $name }
-        if ($entry -and $entry.environment.VCPKG_ROOT) {
-            $env:VCPKG_ROOT = $entry.environment.VCPKG_ROOT
-            break
-        }
-    }
+    $vcpkgRoot = Get-PresetEnvValue $userPresets @($Preset, 'local-base') 'VCPKG_ROOT'
+    if ($vcpkgRoot) { $env:VCPKG_ROOT = $vcpkgRoot }
 }
 
 # --- 2. Thread budget --------------------------------------------------------
