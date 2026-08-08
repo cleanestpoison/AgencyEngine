@@ -92,9 +92,14 @@ $dll = Join-Path $modFolder 'SKSE\Plugins\AgencyEngine.dll'
 if (-not (Test-Path -LiteralPath $dll)) {
     throw "No AgencyEngine.dll in $modFolder — the build didn't deploy."
 }
-$prompt = Join-Path $modFolder 'SKSE\Plugins\SkyrimNet\prompts\agencyengine_impulse_base.prompt'
-if (-not (Test-Path -LiteralPath $prompt)) {
-    throw "No agencyengine_impulse_base.prompt in $modFolder — the statics deploy didn't run."
+# Every prompt the shipped defaults dispatch, not just the spine: a lens whose
+# file is missing renders as nothing and costs the whole impulse, which shows up
+# as a lens that is simply always quiet rather than as an error.
+foreach ($name in @('base', 'aspiration', 'relationship', 'activity', 'resolved')) {
+    $prompt = Join-Path $modFolder "SKSE\Plugins\SkyrimNet\prompts\agencyengine_impulse_$name.prompt"
+    if (-not (Test-Path -LiteralPath $prompt)) {
+        throw "No agencyengine_impulse_$name.prompt in $modFolder — the statics deploy didn't run."
+    }
 }
 
 Write-Host '==> Mod folder contents:' -ForegroundColor Cyan

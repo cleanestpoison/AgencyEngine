@@ -28,6 +28,67 @@ namespace AgencyEngine::PendingImpulses
         // one of them could supply it. The Director republishes it every tick.
         std::atomic<std::size_t> g_cap{ 6 };
 
+        // The configured lenses, republished alongside it. Under its own lock
+        // rather than g_lock: it is written from the Director's tick and read
+        // from every LedgerRecord, and folding it into g_lock would have a
+        // settings republish queue behind a decorator's ledger read.
+        std::mutex            g_ringLock;
+        std::vector<LensRing> g_rings;
+
+        // Taken once per operation, before g_lock. Every ring question below is
+        // then answered from this copy: resolving a name under g_lock would nest
+        // the two locks, and a lock order that exists in only one function is
+        // the kind that gets inverted by the next one.
+        std::vector<LensRing> RingsSnapshot()
+        {
+            std::scoped_lock lock{ g_ringLock };
+            return g_rings;
+        }
+
+        // Which ring a lens name names. A name nobody has configured — a legacy
+        // slot's empty string, or a row since renamed or deleted — is the shared
+        // ring, "". See SetLensRings in the header for why.
+        std::string RingOf(std::string_view lens, const std::vector<LensRing>& rings)
+        {
+            if (lens.empty()) {
+                return {};
+            }
+            for (const auto& ring : rings) {
+                if (ring.name == lens) {
+                    return std::string{ lens };
+                }
+            }
+            return {};
+        }
+
+        // How many slots a record under `lens` may occupy. An explicit cap
+        // wins, then the lens's own configured count, then the global one.
+        std::size_t ResolveCap(std::string_view lens, std::size_t cap)
+        {
+            if (cap > 0) {
+                return cap;
+            }
+            if (!lens.empty()) {
+                std::scoped_lock lock{ g_ringLock };
+                for (const auto& ring : g_rings) {
+                    if (ring.name == lens && ring.slots > 0) {
+                        return ring.slots;
+                    }
+                }
+            }
+            const auto global = g_cap.load();
+            return global == 0 ? 1 : global;
+        }
+
+        // Does a slot suppress a subject for `lens`? Its own ring does, and the
+        // shared ring does for everybody — a subject settled before the rings
+        // existed is settled for whoever asks, and the alternative is a
+        // companion repeating herself on the first tick after an upgrade.
+        bool SuppressesFor(std::string_view slotRing, std::string_view ring)
+        {
+            return slotRing.empty() || ring.empty() || slotRing == ring;
+        }
+
         // Topics are compared loosely — the model writes the slug fresh each
         // time, so "the coin split", "The coin split." and "the  coin split"
         // all have to land on the same subject or the ledger suppresses nothing.
@@ -102,6 +163,7 @@ namespace AgencyEngine::PendingImpulses
                 { "text", e.text },
                 { "topic", e.topic },
                 { "lens", e.lens },
+                { "proposal", e.proposal },
                 { "createdGameDays", e.createdGameDays },
                 { "lastCheckGameDays", e.lastCheckGameDays },
                 { "spoken", e.spoken },
@@ -118,6 +180,9 @@ namespace AgencyEngine::PendingImpulses
             e.text = j.value("text", std::string{});
             e.topic = j.value("topic", std::string{});
             e.lens = j.value("lens", std::string{});
+            // Absent in anything written before proposals existed, which is
+            // correct for those: every lens that shipped then produced topics.
+            e.proposal = j.value("proposal", false);
             e.createdGameDays = j.value("createdGameDays", 0.0);
             e.lastCheckGameDays = j.value("lastCheckGameDays", e.createdGameDays);
             e.spoken = j.value("spoken", false);
@@ -187,6 +252,7 @@ namespace AgencyEngine::PendingImpulses
                         { "formID", slot.formID },
                         { "speakerName", slot.speakerName },
                         { "topic", slot.topic },
+                        { "lens", slot.lens },
                         { "provisional", slot.provisional },
                     });
                 }
@@ -330,8 +396,10 @@ namespace AgencyEngine::PendingImpulses
                 // proposing it again the moment the event tail drains, which is
                 // the whole failure this ledger exists to prevent. So the slot
                 // is created here when she never spoke and therefore never got
-                // one at dispatch.
-                LedgerRecord(formID, removed.speakerName, removed.topic, g_cap.load());
+                // one at dispatch. Cap 0: the entry knows which lens it came
+                // from, and that lens's own slot count is the right ring size —
+                // Clear has no route to Settings to look it up itself.
+                LedgerRecord(formID, removed.speakerName, removed.topic, removed.lens, 0);
                 LedgerDecide(formID, removed.topic, Disposition::Confirm);
             } else if (removed.spoken) {
                 // Withdraw only ever releases a slot that exists. An entry that
@@ -353,11 +421,16 @@ namespace AgencyEngine::PendingImpulses
         return entry->spoken ? "spoken" : "carried";
     }
 
-    void LedgerRecord(std::uint32_t formID, std::string speakerName, std::string topic, std::size_t cap)
+    void LedgerRecord(std::uint32_t formID, std::string speakerName, std::string topic, std::string lens,
+                      std::size_t cap)
     {
-        if (formID == 0 || topic.empty() || cap == 0) {
+        if (formID == 0 || topic.empty()) {
             return;
         }
+        const auto slots = ResolveCap(lens, cap);
+        // Resolved once, before the lock the loop below holds.
+        const auto rings = RingsSnapshot();
+        const auto ring = RingOf(lens, rings);
         const auto key = Normalize(topic);
         if (key.empty()) {
             return;
@@ -379,21 +452,34 @@ namespace AgencyEngine::PendingImpulses
         std::erase_if(g_ledger,
                       [&](const LedgerSlot& s) { return s.formID == formID && Normalize(s.topic) == key; });
 
-        g_ledger.push_back(LedgerSlot{ formID, std::move(speakerName), std::move(topic), true });
+        g_ledger.push_back(LedgerSlot{ formID, std::move(speakerName), std::move(topic), lens, true });
 
-        // Oldest-first within this character only. Other characters' slots are
-        // untouched, so a talkative follower cannot evict a quiet one's memory.
-        std::size_t held = 0;
-        for (const auto& slot : g_ledger) {
-            held += (slot.formID == formID) ? 1 : 0;
-        }
-        while (held > cap) {
-            const auto it = std::ranges::find_if(g_ledger, [&](const LedgerSlot& s) { return s.formID == formID; });
+        // Oldest-first within this character's ring for this lens only. Other
+        // characters are untouched, so a talkative follower cannot evict a quiet
+        // one's memory — and neither can a talkative lens evict another lens's
+        // settled subjects, which is the failure this scoping exists to prevent.
+        //
+        // Membership is an exact ring match, so the shared ring is *not* counted
+        // here: a lens with three slots must not be able to drop six legacy
+        // subjects on its first record, which would lose on the tick after an
+        // upgrade precisely what this is meant to protect. The shared ring is
+        // only ever thinned by a shared-ring record.
+        //
+        // Reads `ring` and the parameter, deliberately copied into the slot
+        // above rather than moved: the loop below erases from g_ledger, and
+        // naming the slot it just pushed would be a reference that does not
+        // survive that.
+        const auto inRing = [&](const LedgerSlot& s) {
+            return s.formID == formID && RingOf(s.lens, rings) == ring;
+        };
+        auto held = static_cast<std::size_t>(std::ranges::count_if(g_ledger, inRing));
+        while (held > slots) {
+            const auto it = std::ranges::find_if(g_ledger, inRing);
             if (it == g_ledger.end()) {
                 break;
             }
-            logger::debug("Ledger: {} is full at {} — '{}' drops off and can be raised again", it->speakerName, cap,
-                          OneLine(it->topic));
+            logger::info("Ledger: {}'s {} list is full at {} — '{}' drops off and can be raised again",
+                         it->speakerName, ring.empty() ? "shared" : ring, slots, OneLine(it->topic));
             g_ledger.erase(it);
             held -= 1;
         }
@@ -450,21 +536,29 @@ namespace AgencyEngine::PendingImpulses
         return out;
     }
 
-    bool LedgerSuppresses(std::uint32_t formID, std::string_view topic)
+    bool LedgerSuppresses(std::uint32_t formID, std::string_view topic, std::string_view lens)
     {
         const auto key = Normalize(topic);
         if (key.empty()) {
             return false;
         }
+        const auto rings = RingsSnapshot();
+        const auto ring = RingOf(lens, rings);
         std::scoped_lock lock{ g_lock };
         return std::ranges::any_of(g_ledger, [&](const LedgerSlot& s) {
-            return s.formID == formID && Normalize(s.topic) == key;
+            return s.formID == formID && SuppressesFor(RingOf(s.lens, rings), ring) && Normalize(s.topic) == key;
         });
     }
 
     void SetLedgerCap(std::size_t cap)
     {
         g_cap.store(cap == 0 ? 1 : cap);
+    }
+
+    void SetLensRings(std::vector<LensRing> lenses)
+    {
+        std::scoped_lock lock{ g_ringLock };
+        g_rings = std::move(lenses);
     }
 
     std::vector<LedgerSlot> LedgerSnapshot()
@@ -610,6 +704,11 @@ namespace AgencyEngine::PendingImpulses
                         slot.formID = item.value("formID", 0u);
                         slot.speakerName = item.value("speakerName", std::string{});
                         slot.topic = item.value("topic", std::string{});
+                        // Absent in a sidecar written before the per-lens ring.
+                        // Left empty rather than guessed: an empty lens is the
+                        // legacy shared ring, which is exactly the behaviour
+                        // those slots were written under. See the header.
+                        slot.lens = item.value("lens", std::string{});
                         slot.provisional = item.value("provisional", false);
                         if (slot.formID != 0 && !slot.topic.empty()) {
                             ledger.push_back(std::move(slot));

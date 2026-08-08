@@ -28,7 +28,13 @@ namespace AgencyEngine
             if (!out.empty()) {
                 out += ", ";
             }
-            out += std::format("{}({})={}", lens.name, lens.prompt, lens.weight);
+            // Every per-lens field, not just the weight: a log someone sends in
+            // has to describe the configuration it was produced under, and
+            // "proposals, three slots" is the difference between a lens that
+            // recurs and one that vetoes itself into silence.
+            out += std::format("{}({})={}{}{}", lens.name, lens.prompt, lens.weight,
+                               lens.proposal ? " proposals" : "",
+                               lens.ledgerSlots > 0 ? std::format(" slots={}", lens.ledgerSlots) : "");
         }
         // Worth spelling out rather than logging an empty list: every lens
         // weighted to zero is a valid configuration that stops the loop
@@ -128,8 +134,25 @@ namespace AgencyEngine
                     AssignBuffer(lenses[index].name, entry.value("name", std::string{}));
                     AssignBuffer(lenses[index].prompt, entry.value("prompt", std::string{}));
                     lenses[index].weight = entry.value("weight", 0);
+                    // Both absent from any file written before the Activity
+                    // lens, and both default to what those installs already do:
+                    // topics, on the global ledger count. An upgrade is not a
+                    // reset — nobody's tuning changes because a field appeared.
+                    lenses[index].proposal = entry.value("proposal", false);
+                    lenses[index].ledgerSlots = std::max(entry.value("ledgerSlots", 0), 0);
                     ++index;
                 }
+
+                // Said out loud, because the consequence is invisible otherwise:
+                // an upgrade that ships a new lens does not add it to a file
+                // that already has a lens list, and the symptom is a lens the
+                // release notes describe never firing. Wholesale replacement is
+                // the deliberate part — a lens someone deleted must not come
+                // back on the next load — so the fix is a line here and a row
+                // added by hand, not a merge.
+                logger::info("Settings: {} lens row(s) came from the file and replaced the shipped defaults. A lens "
+                             "added in a later version does not appear on its own — add its row on the Lenses tab.",
+                             index);
             }
 
             AssignBuffer(eventTypeFilter, j.value("eventTypeFilter", std::string{ eventTypeFilter }));
@@ -164,6 +187,8 @@ namespace AgencyEngine
                     { "name", std::string{ lens.name } },
                     { "prompt", std::string{ lens.prompt } },
                     { "weight", lens.weight },
+                    { "proposal", lens.proposal },
+                    { "ledgerSlots", lens.ledgerSlots },
                 });
             }
 

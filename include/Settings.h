@@ -45,6 +45,27 @@ namespace AgencyEngine
         // Inja resolves unknown decorators when it parses a file, so never
         // dispatching it is the only reliable way to never parse it.
         int  weight = 0;
+        // Does this lens produce *proposals* rather than *topics*?
+        //
+        // A topic is met when someone answers it — agreeing, refusing, arguing
+        // it out. A proposal ("come drink", "spar with me") is not: agreement
+        // alone means nothing has happened yet, and the resolution check has to
+        // treat "sure" as the deferral it is or the impulse is buried at the
+        // exact moment the player says yes.
+        //
+        // Declared here rather than inferred from `name`, which is free text the
+        // user can edit — a rename would silently revert a lens to topic
+        // semantics with no error and no log line. False by default, so a lens
+        // configured before this existed keeps behaving exactly as it did.
+        bool proposal = false;
+        // Ledger slots for this lens, or 0 to use the global count.
+        //
+        // Per lens because the rings are per lens and the right size differs by
+        // an order of magnitude: topics are unlimited and want a long memory,
+        // while proposals come from a closed vocabulary of under ten subjects —
+        // a six-slot ring holds nearly all of it and vetoes the lens into
+        // silence. Three gives a natural four-proposal rotation instead.
+        int  ledgerSlots = 0;
     };
 
     inline constexpr int kMaxLenses = 6;
@@ -210,9 +231,17 @@ namespace AgencyEngine
         // Every impulse is asked through a lens; there is no general prompt
         // behind them. Weighting them all to zero switches the loop off rather
         // than falling back to anything, and the hold says so.
+        //
+        // Weights: Activity takes the largest share because it has the most
+        // material — daily life happens every day, where an ignored aspiration
+        // or an unsaid standing has to accumulate first. Aspiration takes the
+        // smallest of the three now that its mundane appetites have moved to
+        // Activity, which is what stops the two of them competing for one
+        // register under two names.
         Lens  lenses[kMaxLenses] = {
-            { "Aspiration", "agencyengine_impulse_aspiration", 50 },
-            { "Relationship", "agencyengine_impulse_relationship", 50 },
+            { "Aspiration", "agencyengine_impulse_aspiration", 35 },
+            { "Relationship", "agencyengine_impulse_relationship", 25 },
+            { "Activity", "agencyengine_impulse_activity", 40, true, 3 },
         };
 
         // Comma-separated SkyrimNet event types; empty = all.

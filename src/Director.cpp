@@ -142,6 +142,11 @@ namespace AgencyEngine::Director
             bool          generateThought = false;
             double        gameDays = 0.0;
             std::string   lens;
+            // Declared by the lens that produced it, and carried all the way to
+            // the pending entry: it is what the resolution check branches on.
+            bool          proposal = false;
+            // That lens's ledger ring size, 0 meaning the global count.
+            int           lensLedgerSlots = 0;
         };
 
         // A finished impulse waiting for the party to stop talking, and when it
@@ -249,6 +254,12 @@ namespace AgencyEngine::Director
         {
             std::string name;    // as typed in the UI; may be blank
             std::string prompt;  // never empty — a tick with no usable lens holds
+            // The two declared properties that decide what happens to the
+            // impulse afterwards. Carried from the settings row rather than
+            // matched on the name later, because the name is the one field the
+            // user can edit freely.
+            bool        proposal = false;
+            int         ledgerSlots = 0;
         };
 
         // ---- main thread -------------------------------------------------
@@ -451,6 +462,7 @@ namespace AgencyEngine::Director
             entry.text = d.content;
             entry.topic = d.topic;
             entry.lens = d.lens;
+            entry.proposal = d.proposal;
             entry.createdGameDays = d.gameDays;
             PendingImpulses::Set(std::move(entry));
             return true;
@@ -480,16 +492,26 @@ namespace AgencyEngine::Director
             entry.text = d.content;
             entry.topic = d.topic;
             entry.lens = d.lens;
+            entry.proposal = d.proposal;
             entry.createdGameDays = d.gameDays;
             entry.spoken = true;
             entry.spokenGameDays = d.gameDays;
             PendingImpulses::Set(std::move(entry));
 
-            if (ledgerEnabled && ledgerSlots > 0 && !d.topic.empty()) {
-                PendingImpulses::LedgerRecord(d.speakerFormID, d.speakerName, d.topic,
-                                              static_cast<std::size_t>(ledgerSlots));
-                logger::info("Ledger: {} has raised '{}' — held until we know whether anyone met it", d.speakerName,
-                             OneLine(d.topic));
+            // The lens's own count decides whether there is a ring to record
+            // into; the global one only stands in for a lens that asks for it.
+            // Gating on the global alone meant a lens configured with three
+            // slots recorded nothing whenever the global was 0.
+            const auto slots = d.lensLedgerSlots > 0 ? d.lensLedgerSlots : ledgerSlots;
+            if (ledgerEnabled && slots > 0 && !d.topic.empty()) {
+                // The slot goes in this lens's own ring, sized by that lens's
+                // count — 0 there means the global one. A lens only ever
+                // displaces its own subjects, so a lens that cycles fast cannot
+                // quietly release what another one settled.
+                PendingImpulses::LedgerRecord(d.speakerFormID, d.speakerName, d.topic, d.lens,
+                                              static_cast<std::size_t>(std::max(d.lensLedgerSlots, 0)));
+                logger::info("Ledger: {} has raised '{}' under the {} lens — held until we know whether anyone met it",
+                             d.speakerName, OneLine(d.topic), d.lens.empty() ? "unnamed" : d.lens);
             }
         }
 
@@ -940,7 +962,7 @@ namespace AgencyEngine::Director
             }
 
             previous = chosen->name;
-            return LensChoice{ chosen->name, chosen->prompt };
+            return LensChoice{ chosen->name, chosen->prompt, chosen->proposal, chosen->ledgerSlots };
         }
 
         void Fire(const Settings& settings, const GameSnapshot& snap, bool manual)
@@ -993,8 +1015,8 @@ namespace AgencyEngine::Director
                 // Runs on a SkyrimNet worker thread. Nothing here touches the
                 // game — the delivery hop is posted to the main thread.
                 [delivery, gameDays, dispatchedAt, player = std::move(player), roster = std::move(roster),
-                 generateThought = settings.generateThought, lensName = lens.name,
-                 ledgerVeto = settings.ledgerVeto && settings.ledgerEnabled,
+                 generateThought = settings.generateThought, lensName = lens.name, proposal = lens.proposal,
+                 lensLedgerSlots = lens.ledgerSlots, ledgerVeto = settings.ledgerVeto && settings.ledgerEnabled,
                  verbose = settings.debugLog](std::string response, bool success) {
                     const auto elapsedMs = NowMs() - dispatchedAt;
                     g_inFlight.store(false);
@@ -1088,11 +1110,16 @@ namespace AgencyEngine::Director
                     // same thing twice, and that the log names which subject was
                     // held back, which is the only way to tell a prompt that is
                     // being ignored from one that is working.
+                    // Scoped to this lens's ring, like eviction: another lens
+                    // holding the subject is not this lens's business, and the
+                    // prompt already renders every lens's slots as one "already
+                    // raised" list so a repeat across lenses is headed off
+                    // before the call rather than after it.
                     if (ledgerVeto && !decision.topic.empty() &&
-                        PendingImpulses::LedgerSuppresses(speaker->formID, decision.topic)) {
-                        logger::info("Held back: {} has already raised '{}' and the ledger still holds it. Nothing "
-                                     "is said this tick.",
-                                     speaker->name, OneLine(decision.topic));
+                        PendingImpulses::LedgerSuppresses(speaker->formID, decision.topic, lensName)) {
+                        logger::info("Held back: {} has already raised '{}' under the {} lens and the ledger still "
+                                     "holds it. Nothing is said this tick.",
+                                     speaker->name, OneLine(decision.topic), lensName.empty() ? "unnamed" : lensName);
                         Impulse held;
                         held.when = FormatGameTime(gameDays);
                         held.content = std::format("(held back: {} has already raised '{}')", speaker->name,
@@ -1128,6 +1155,8 @@ namespace AgencyEngine::Director
                     outgoing.generateThought = generateThought;
                     outgoing.gameDays = gameDays;
                     outgoing.lens = lensName;
+                    outgoing.proposal = proposal;
+                    outgoing.lensLedgerSlots = lensLedgerSlots;
 
                     SKSE::GetTaskInterface()->AddTask(
                         [outgoing = std::move(outgoing)]() mutable { DeliverOrHold(std::move(outgoing)); });
@@ -1601,6 +1630,12 @@ namespace AgencyEngine::Director
             // counting it would mark every beat settled the moment she opened
             // her mouth, which is exactly the state this is here to notice.
             context["spoken"] = due->spoken;
+            // Which of the two questions "has it been met?" means. For a topic,
+            // an answer of any kind meets it. For a proposal, agreement is a
+            // deferral: it is met when the events show the thing happened, or
+            // when someone plainly refused. Always set — an unset name is a
+            // render error in Inja, and a render error costs the check.
+            context["proposal"] = due->proposal;
             context["marked_at"] = FormatGameTime(due->spoken ? due->spokenGameDays : due->createdGameDays);
             // Her own tail, not the player's: the question is whether *she* has
             // had this out, and a generous window because the whole point is to
@@ -1685,6 +1720,21 @@ namespace AgencyEngine::Director
             PendingImpulses::SetLedgerCap(settings.ledgerEnabled && settings.ledgerSlots > 0
                                               ? static_cast<std::size_t>(settings.ledgerSlots)
                                               : 1);
+
+            // Every configured lens, republished with it. Two reasons, and the
+            // second is why rows with no slot override are published too: a slot
+            // created by Clear() has to land in a ring the size its lens asks
+            // for, and a lens name only counts as a ring while it is still a
+            // lens — so a row renamed on the Settings page stops being a ring
+            // and its old slots fall back to the shared one rather than being
+            // stranded there forever, suppressing nothing.
+            std::vector<PendingImpulses::LensRing> rings;
+            for (const auto& lens : settings.lenses) {
+                if (lens.name[0] != '\0') {
+                    rings.push_back({ lens.name, static_cast<std::size_t>(std::max(lens.ledgerSlots, 0)) });
+                }
+            }
+            PendingImpulses::SetLensRings(std::move(rings));
 
             // Load-on-first-sight and save-when-dirty, both keyed off SkyrimNet's
             // save ID. Running it from here rather than from kPostLoadGame

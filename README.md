@@ -22,8 +22,8 @@ Every N in-game minutes (default 120), if a follower is present and you're not i
 
 1. Pull the recent SkyrimNet event tail for the player and for each follower.
 2. Pick a **lens** — which question this tick asks — and render its prompt against that state, then send it to the
-   configured LLM. Two ship: *Aspiration* ("is anyone's agenda being ignored?") and *Relationship* ("is anything
-   unsaid between these people?").
+   configured LLM. Three ship: *Aspiration* ("is anyone's agenda being ignored?"), *Relationship* ("is anything
+   unsaid between these people?") and *Activity* ("is there something they want to do with these people?").
 3. Read back a decision — `{"speaker", "target", "narration"}`, or `{"speaker": null}` for nobody.
 4. On a decision to speak, resolve the named speaker and target against the party and deliver the stage direction as
    **direct narration**, which gives that companion a speaking turn on the topic. They write their own line; the
@@ -69,6 +69,7 @@ Settings persist to `Data/SKSE/Plugins/AgencyEngine.json` (press *Save settings*
 | `src/Settings.cpp` | JSON-backed config |
 | `src/State.cpp` | the one mutex everything shared lives behind |
 | `statics/` | mirrors the mod folder; the `.prompt` file deploys from here |
+| `tests/` | the offline ledger tests, off unless `AGENCYENGINE_BUILD_TESTS=ON` |
 
 ### Threading
 
@@ -122,6 +123,23 @@ Machine-specific paths live in `CMakeUserPresets.json`:
   mutates the active modlist. The build writes `_deploy/AgencyEngine/`; copy that across when you want to test.
 
 The first configure builds CommonLibSSE-NG from source and takes a while.
+
+### Tests
+
+```powershell
+pwsh -File build.ps1 test -Preset local-tests   # configure if needed, build, then ctest
+```
+
+One target, and deliberately not part of the default build: `AGENCYENGINE_BUILD_TESTS` is `OFF`, so a plain clone
+builds the plugin and nothing else. There is exactly one thing here worth testing offline — the **ledger**, which is
+pure state with no game, no SkyrimNet and no LLM behind it, and which can regress an already-shipped lens with no
+visible symptom (a companion simply stops raising things, days later, because another lens evicted her settled
+subjects). The tests call it with the arguments the Director passes; `tests/shim/Logging.h` stands in for the
+spdlog/SKSE header, which doesn't exist outside the game process.
+
+Everything else is verified in game, deliberately: there is no offline renderer for Inja or its decorators, so every
+prompt change is judged from the per-lens spoken/quiet counters, the History page's context payload, the ledger view
+and the log lines that name every eviction, suppression and declining path.
 
 ### Papyrus
 
@@ -190,6 +208,7 @@ SKSE/Plugins/AgencyEngine.dll
 SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_base.prompt         (the shared spine)
 SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_aspiration.prompt
 SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_relationship.prompt
+SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_activity.prompt
 SKSE/Plugins/SkyrimNet/config/plugins/AgencyEngine/manifest.yaml
 Scripts/AgencyEngine_Bridge.pex
 ```
@@ -215,15 +234,24 @@ A **lens** is one focused question the loop can ask. Rather than a single prompt
 thing at once and gets the easiest one back every time, each lens asks for one kind and is told to return silence
 when that kind isn't there.
 
-| Lens | Asks | Needs |
-|------|------|-------|
-| Aspiration | Is anyone's agenda being ignored? A want that has waited, a proposal held onto, an aspiration walked past. | — |
-| Relationship | Is anything unsaid between these people? A settled view one companion has been carrying about another. | SeverActions, optional |
+| Lens | Asks | Produces | Needs |
+|------|------|----------|-------|
+| Aspiration | Is anyone's agenda being ignored? An aspiration walked past, an errand stuck, an order of operations she disagrees with. | Topics | — |
+| Relationship | Is anything unsaid between these people? A settled view one companion has been carrying about another. | Topics | SeverActions, optional |
+| Activity | Is there something they want to *do* with these people? A drink, a round of sparring, a game, restlessness for a fight, an hour of somebody's company. | Proposals | — |
+
+Aspiration deliberately does **not** own mundane appetites — rest, food, a bed, a drink. Those are Activity's, and
+leaving them in both would split one register across two names instead of asking two questions.
+
+**Upgrading:** an existing `AgencyEngine.json` replaces the shipped lens list wholesale, so that a lens you deleted
+stays deleted. That means Activity does **not** appear by itself on an install that already has a settings file —
+add a row on the Lenses tab with the prompt `agencyengine_impulse_activity`, tick **Proposals** and set **Slots** to
+3. Your existing weights and tuning are untouched either way.
 
 They share a spine. `agencyengine_impulse_base.prompt` owns the JSON contract, the hard constraints, the state dump
-and the forced-turn machinery; each lens `{% extends %}`es it and overrides five prose blocks (`lens_task`,
-`lens_when_to_speak`, `lens_examples`, `lens_focus`, `lens_user_question`). Fixing a constraint means editing one
-file, and the lenses can't drift apart on the output format.
+and the forced-turn machinery; each lens `{% extends %}`es it and overrides six prose blocks (`lens_task`,
+`lens_when_to_speak`, `lens_examples`, `lens_focus`, `lens_subject_source`, `lens_user_question`). Fixing a
+constraint means editing one file, and the lenses can't drift apart on the output format.
 
 No block sits inside an `{% if %}` or a `{% for %}`, and no lens reads a variable the base sets. Blocks nested in
 control flow and cross-template variable scope are the two parts of Inja inheritance that weren't worth betting an
@@ -251,6 +279,30 @@ argument for tracked threads (tier 2), not for loosening its prompt.
 
 There is no general prompt behind the lenses. Weighting every lens to 0 doesn't fall back to anything — it stops
 the loop, and the Status page says so rather than quietly asking a broader question.
+
+### Topics and proposals
+
+Each lens row declares whether it produces **topics** or **proposals**, and two things branch on that declaration.
+It is a checkbox on the row, never inferred from the lens's name — the name is a label you can edit, and a rename
+that silently changed how an impulse resolves would fail as wrong behaviour rather than as an error.
+
+A **topic** is met when somebody answers it: agreeing, refusing, arguing it out. A **proposal** asks the party to
+*do* something, and agreement doesn't settle it — "yes, let's spar" followed by no sparring is a deferral, and
+deferral is not an answer. So the resolution check keeps a proposal live until the events show the thing happened
+or somebody plainly refused, which is the only thing that makes a proposal land at all.
+
+The **ledger rings are per lens** for the same reason. Proposals come from a closed vocabulary — a companion has
+perhaps ten activity subjects in her life, against unlimited unique topics — so a shared six-slot ring would hold
+her whole repertoire, veto her into silence, and evict genuine aspiration and relationship subjects on the way.
+Each lens now evicts only within its own ring, and its size is the `Slots` column (0 = use the global number on the
+Impulses tab). Rendering stays combined: the prompt sees one "already raised" list, so no lens repeats another's
+subject.
+
+There is a **shared ring** behind the per-lens ones, holding anything raised before the rings existed and anything
+raised by a lens that has since been renamed or deleted. Its slots suppress for every lens and are only ever
+evicted by another shared-ring slot — so a lens with three slots can't drop six settled subjects on the first tick
+after an upgrade, and renaming a row doesn't strand what it had already settled. They leave one at a time, as their
+subjects come round again and get rewritten under a live lens.
 
 ## Tuning the impulse
 

@@ -10,6 +10,7 @@
 #   pwsh -File build.ps1 build               # cmake --build build/local-release
 #   pwsh -File build.ps1 clean               # remove build/<preset>
 #   pwsh -File build.ps1 build -Preset local-debug
+#   pwsh -File build.ps1 test -Preset local-tests   # build, then ctest
 #
 # The first configure builds every vcpkg dependency from source
 # (CommonLibSSE-NG is template-heavy) — expect a long first run. Subsequent
@@ -17,7 +18,7 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('configure', 'build', 'clean')]
+    [ValidateSet('configure', 'build', 'clean', 'test')]
     [string]$Verb = 'build',
 
     [string]$Preset = 'local-release',
@@ -113,6 +114,19 @@ $proc.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
 
 $buildDir = Join-Path $PSScriptRoot "build/$Preset"
 
+# Shared by 'build' and 'test': configure first if there is no cache yet, so a
+# fresh clone needs one command rather than two.
+function Invoke-Build {
+    if (-not (Test-Path "$buildDir/CMakeCache.txt")) {
+        Write-Host "==> cmake --preset $Preset (no cache yet)" -ForegroundColor Cyan
+        cmake --preset $Preset
+        if ($LASTEXITCODE -ne 0) { throw "configure failed ($LASTEXITCODE)" }
+    }
+    Write-Host "==> cmake --build $buildDir -j $Threads" -ForegroundColor Cyan
+    cmake --build $buildDir -j $Threads
+    if ($LASTEXITCODE -ne 0) { throw "build failed ($LASTEXITCODE)" }
+}
+
 switch ($Verb) {
     'clean' {
         if (Test-Path $buildDir) {
@@ -126,14 +140,18 @@ switch ($Verb) {
         if ($LASTEXITCODE -ne 0) { throw "configure failed ($LASTEXITCODE)" }
     }
     'build' {
-        if (-not (Test-Path "$buildDir/CMakeCache.txt")) {
-            Write-Host "==> cmake --preset $Preset (no cache yet)" -ForegroundColor Cyan
-            cmake --preset $Preset
-            if ($LASTEXITCODE -ne 0) { throw "configure failed ($LASTEXITCODE)" }
-        }
-        Write-Host "==> cmake --build $buildDir -j $Threads" -ForegroundColor Cyan
-        cmake --build $buildDir -j $Threads
-        if ($LASTEXITCODE -ne 0) { throw "build failed ($LASTEXITCODE)" }
+        Invoke-Build
+    }
+    'test' {
+        # Goes through this script rather than being a bare ctest call in the
+        # README, because ctest ships inside the VS install and only the dev
+        # shell above puts it on PATH — `ctest` typed into a plain terminal on
+        # this setup is "command not found".
+        Invoke-Build
+
+        Write-Host "==> ctest --test-dir $buildDir" -ForegroundColor Cyan
+        ctest --test-dir $buildDir --output-on-failure
+        if ($LASTEXITCODE -ne 0) { throw "tests failed ($LASTEXITCODE)" }
     }
 }
 

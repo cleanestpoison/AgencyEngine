@@ -52,6 +52,14 @@ namespace AgencyEngine::PendingImpulses
         std::string   text;         // the stage direction, verbatim
         std::string   topic;        // short slug; the key the ledger suppresses on
         std::string   lens;
+        // What kind of impulse this is, copied off the lens that produced it at
+        // dispatch and carried here because the resolution check asks a
+        // different question about each. A *topic* is met when someone answers
+        // it; a *proposal* ("come drink", "spar with me") is not met by
+        // agreement, only by the thing happening or a plain refusal — "sure"
+        // that leads nowhere is a deferral. Declared by the lens rather than
+        // inferred from its name, which the user can edit; see docs/adr/0001.
+        bool          proposal = false;
         double        createdGameDays = 0.0;
         // She was handed a speaking turn on this and said it. The entry stays
         // alive afterwards rather than being dropped, because "she said it" and
@@ -126,6 +134,26 @@ namespace AgencyEngine::PendingImpulses
     // subject raisable again, but six other beats having come and gone is a
     // decent test of "enough has changed".
     //
+    // EVICTION AND VETO ARE SCOPED PER LENS. Every slot carries the lens that
+    // wrote it, and a lens only ever displaces its own subjects. That is not
+    // tidiness: a lens producing *proposals* draws on a closed vocabulary of
+    // under ten subjects, so it cycles far faster than one producing topics.
+    // Sharing one ring, it would hold its entire repertoire, veto itself into
+    // silence, and evict genuine aspiration and relationship subjects on the
+    // way — degrading two lenses that already shipped, invisibly, over a long
+    // playthrough. Rendering stays combined (LedgerTopics is per character, not
+    // per lens), so no lens repeats another's subject.
+    //
+    // Slots restored from a sidecar written before this existed have no lens
+    // key, and so do slots whose lens no longer exists (a row renamed or
+    // deleted on the Settings page — see SetLensRings). They are not migrated
+    // and not discarded. They keep the shared ring they were written under: they
+    // suppress whichever lens asks, and only another shared-ring record can
+    // evict them. A lens with a small ring must never be able to drop them —
+    // that would lose, on the first tick after an upgrade, exactly what the
+    // per-lens ring exists to protect. They leave one at a time, as their
+    // subjects come round again and get rewritten under a real lens.
+    //
     // A slot is written *provisional* at dispatch and decided when the entry
     // that owns it dies (see Disposition). Provisional slots suppress exactly
     // like confirmed ones — the immediate next-tick repeat is what they are for
@@ -139,13 +167,27 @@ namespace AgencyEngine::PendingImpulses
         std::uint32_t formID = 0;
         std::string   speakerName;
         std::string   topic;
+        // Which lens raised it, by name. Empty means a slot restored from a
+        // sidecar older than the per-lens ring. A name that is no longer a
+        // configured lens counts the same way, so renaming a row on the
+        // Settings page does not change what its slots do — they go on
+        // suppressing and go on being evicted, in the shared ring. The name is
+        // a label; this is the only thing in the mod that reads it, and it
+        // reads it as an identity for a *ring*, never as a behaviour.
+        std::string   lens;
         bool          provisional = true;
     };
 
-    // Records `topic` against `formID` as provisional, evicting that
-    // character's oldest slot past `cap`. A repeat of a topic already held moves
-    // it to newest rather than taking a second slot.
-    void LedgerRecord(std::uint32_t formID, std::string speakerName, std::string topic, std::size_t cap);
+    // Records `topic` against `formID` as provisional, evicting the oldest slot
+    // in that character's ring for `lens` once it is past its cap. A repeat of a
+    // topic already held moves it to newest rather than taking a second slot.
+    //
+    // `cap` 0 means "whatever this lens is configured for" — the per-lens count
+    // published by SetLensRings, and the global one behind that. 0 is what a
+    // lens row set to 0 means in the UI, and what callers that know the lens but
+    // not the settings (Clear) pass.
+    void LedgerRecord(std::uint32_t formID, std::string speakerName, std::string topic, std::string lens,
+                      std::size_t cap);
 
     // Decide a provisional slot. Confirm keeps it; Withdraw drops it. Both are
     // no-ops on a topic that is not held, so a delivery that never got a topic
@@ -156,17 +198,37 @@ namespace AgencyEngine::PendingImpulses
     // prompt renders. Empty when there is nothing.
     std::vector<std::string> LedgerTopics(std::uint32_t formID);
 
-    // Whether `topic` is currently suppressed for `formID`. Compared loosely
-    // (case and surrounding punctuation ignored), because the model writes the
-    // slug freshly each time and "the coin split" and "The coin split." are the
-    // same subject.
-    bool LedgerSuppresses(std::uint32_t formID, std::string_view topic);
+    // Whether `topic` is currently suppressed for `formID` under `lens`.
+    // Compared loosely (case and surrounding punctuation ignored), because the
+    // model writes the slug freshly each time and "the coin split" and "The coin
+    // split." are the same subject. An empty `lens` asks across every ring.
+    bool LedgerSuppresses(std::uint32_t formID, std::string_view topic, std::string_view lens = {});
 
     // Slots per character, republished by the Director every tick. Clear() needs
     // it — a subject confirmed settled while she was still carrying it unsaid has
     // no slot yet and gets one there — and Clear is called from places that have
     // no access to Settings.
     void SetLedgerCap(std::size_t cap);
+
+    // Every configured lens and its slot count (0 = use the global one),
+    // republished with it by the Director each tick.
+    //
+    // It does two jobs. It is where Clear() gets a ring size from — Clear knows
+    // which lens an entry came from but has no route to Settings. And it is what
+    // makes a lens name mean a ring: a slot naming a lens that is *not* in this
+    // list belongs to no ring of its own and falls back to the shared one, which
+    // is what stops a rename from stranding every subject that lens had settled.
+    //
+    // Before the first tick publishes it the list is empty, so every slot reads
+    // as shared. That is the pre-existing behaviour and the conservative
+    // direction — more suppression, not less — and nothing dispatches an impulse
+    // in that window anyway.
+    struct LensRing
+    {
+        std::string name;
+        std::size_t slots = 0;
+    };
+    void SetLensRings(std::vector<LensRing> lenses);
 
     std::vector<LedgerSlot> LedgerSnapshot();
 

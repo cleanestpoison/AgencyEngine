@@ -36,6 +36,12 @@ endif()
 
 file(GLOB_RECURSE source_files CONFIGURE_DEPENDS src/*.cpp)
 
+# Off by default, so the build a fresh clone runs is exactly the plugin. There
+# is one thing here worth testing offline — the ledger, which is pure state and
+# can regress a shipped lens with no visible symptom — and it needs neither the
+# game nor SkyrimNet to compile. See tests/CMakeLists.txt.
+option(AGENCYENGINE_BUILD_TESTS "Build the offline ledger tests" OFF)
+
 # ---------------------------------------------------------------------------
 # Papyrus
 # ---------------------------------------------------------------------------
@@ -113,6 +119,11 @@ endif()
 
 message(STATUS "SkyrimNet found at: ${SKYRIMNET_DIR}")
 target_include_directories(${PROJECT_NAME} PRIVATE "${SKYRIMNET_DIR}/CppAPI")
+
+if(AGENCYENGINE_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
 
 # ---------------------------------------------------------------------------
 # Deploy

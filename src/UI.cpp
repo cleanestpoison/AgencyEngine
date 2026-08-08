@@ -266,7 +266,9 @@ namespace AgencyEngine::UI
             HelpMarker("Oldest drops off when the list is full, and that subject can be raised again.\n"
                        "By count rather than by a clock on purpose: a quiet in-game week should not make\n"
                        "a settled subject fair game again, but six other things having come and gone is\n"
-                       "a fair test of enough having changed.");
+                       "a fair test of enough having changed.\n"
+                       "Counted per lens: each lens forgets only its own subjects. This is the number a\n"
+                       "lens uses when its own Slots column on the Lenses tab is left at 'shared'.");
 
             dirty |= ImGui::Checkbox("Refuse an impulse that repeats one", &s.ledgerVeto);
             HelpMarker("A backstop for when the prompt is ignored. The call is already spent by then, so\n"
@@ -362,13 +364,15 @@ namespace AgencyEngine::UI
                 }
             }
 
-            if (ImGui::BeginTable("lenses", 5,
+            if (ImGui::BeginTable("lenses", 7,
                                   ImGuiMCP::ImGuiTableFlags_Borders | ImGuiMCP::ImGuiTableFlags_RowBg |
                                       ImGuiMCP::ImGuiTableFlags_SizingStretchProp)) {
                 ImGui::TableSetupColumn("Name", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 0.9f);
                 ImGui::TableSetupColumn("Prompt file", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 1.6f);
                 ImGui::TableSetupColumn("Weight", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 1.0f);
                 ImGui::TableSetupColumn("Share", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 0.5f);
+                ImGui::TableSetupColumn("Proposals", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 0.5f);
+                ImGui::TableSetupColumn("Slots", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 0.6f);
                 ImGui::TableSetupColumn("This session", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 0.9f);
                 ImGui::TableHeadersRow();
 
@@ -402,6 +406,18 @@ namespace AgencyEngine::UI
                         ImGui::Text("%.0f%%", total > 0 ? 100.0 * lens.weight / total : 0.0);
                     }
 
+                    // Declared, never inferred from the name above — which is a
+                    // label the user is free to edit, and a rename that
+                    // silently changed how an impulse resolves would fail as
+                    // wrong behaviour rather than as an error.
+                    ImGui::TableNextColumn();
+                    dirty |= ImGui::Checkbox("##proposal", &lens.proposal);
+
+                    ImGui::TableNextColumn();
+                    ImGui::SetNextItemWidth(-1.0f);
+                    dirty |= ImGui::SliderInt("##slots", &lens.ledgerSlots, 0, 20,
+                                              lens.ledgerSlots == 0 ? "shared" : "%d");
+
                     // A lens that is always quiet is either asking for
                     // something this playthrough doesn't have yet or asking for
                     // something the state cannot evidence — and the ratio is
@@ -421,6 +437,14 @@ namespace AgencyEngine::UI
             }
 
             HelpMarker("Each prompt file resolves to Data/SKSE/Plugins/SkyrimNet/prompts/<name>.prompt");
+            Note("Proposals: tick this for a lens that asks the party to DO something together - a drink, a "
+                 "round of sparring, a game. Agreement does not settle a proposal; only the thing happening, or "
+                 "a plain refusal, does. 'Sure' followed by nothing is a deferral, and she keeps carrying it.");
+            Note("Slots: how many subjects this lens remembers per companion, or 'shared' to use the number on "
+                 "the Impulses tab. Each lens forgets only its own subjects, so a lens that cycles fast cannot "
+                 "release what another one settled. A lens drawing on a small vocabulary - activities, where "
+                 "there are perhaps ten - wants a small number, or it holds its whole repertoire and goes "
+                 "quiet.");
             if (total <= 0) {
                 ImGui::TextColored(kWarn, "%s",
                                    "Every lens is weighted 0 - there is nothing to ask, so no impulse fires.");
@@ -582,27 +606,89 @@ namespace AgencyEngine::UI
                 return;
             }
 
-            const auto    settings = SnapshotSettings();
-            std::uint32_t current = 0;
-            for (const auto& slot : slots) {
-                if (slot.formID != current) {
-                    current = slot.formID;
-                    // How full this character's list is, which is what decides
-                    // when the oldest subject becomes fair game again.
-                    const auto held = std::ranges::count_if(
-                        slots, [&](const PendingImpulses::LedgerSlot& s) { return s.formID == current; });
-                    ImGui::TextColored(kSpeaker, "%s", slot.speakerName.c_str());
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("%d of %d", static_cast<int>(held), settings.ledgerSlots);
+            const auto settings = SnapshotSettings();
+
+            // How full a ring is, which is what decides when its oldest subject
+            // becomes fair game again. Per ring rather than per character: the
+            // cap is per lens now, so one number against the global setting
+            // would read as full when no ring is.
+            //
+            // A slot whose lens is no longer configured — a renamed or deleted
+            // row, or a slot older than the rings — belongs to the shared ring,
+            // exactly as the ledger itself treats it.
+            const auto capFor = [&](const std::string& lens) {
+                for (const auto& configured : settings.lenses) {
+                    if (configured.name[0] != '\0' && lens == configured.name) {
+                        return configured.ledgerSlots > 0 ? configured.ledgerSlots : settings.ledgerSlots;
+                    }
                 }
-                ImGui::BulletText("%s", slot.topic.c_str());
-                if (slot.provisional) {
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("%s", "(waiting to see if it was answered)");
+                return settings.ledgerSlots;
+            };
+            const auto ringOf = [&](const std::string& lens) -> std::string {
+                for (const auto& configured : settings.lenses) {
+                    if (configured.name[0] != '\0' && lens == configured.name) {
+                        return lens;
+                    }
+                }
+                return {};
+            };
+
+            // Grouped by speaker, then by ring. Walked by first appearance
+            // rather than assuming the snapshot is already grouped — it is one
+            // flat list in insertion order, and two companions raising things
+            // in turn interleave in it.
+            std::vector<std::uint32_t> speakers;
+            for (const auto& slot : slots) {
+                if (std::ranges::find(speakers, slot.formID) == speakers.end()) {
+                    speakers.push_back(slot.formID);
                 }
             }
-            ImGui::TextDisabled("%s", "Oldest drops off when a companion's list is full, and can be raised again. "
-                                      "One never answered is released as soon as she stops carrying it.");
+
+            for (const auto formID : speakers) {
+                std::vector<std::string> rings;
+                for (const auto& slot : slots) {
+                    if (slot.formID != formID) {
+                        continue;
+                    }
+                    auto ring = ringOf(slot.lens);
+                    if (std::ranges::find(rings, ring) == rings.end()) {
+                        rings.push_back(std::move(ring));
+                    }
+                }
+
+                for (const auto& slot : slots) {
+                    if (slot.formID == formID) {
+                        ImGui::TextColored(kSpeaker, "%s", slot.speakerName.c_str());
+                        break;
+                    }
+                }
+
+                for (const auto& ring : rings) {
+                    const auto held = std::ranges::count_if(slots, [&](const PendingImpulses::LedgerSlot& s) {
+                        return s.formID == formID && ringOf(s.lens) == ring;
+                    });
+                    ImGui::TextDisabled("    %s  %d of %d",
+                                        ring.empty() ? "shared (lenses that no longer exist)" : ring.c_str(),
+                                        static_cast<int>(held), capFor(ring));
+
+                    for (const auto& slot : slots) {
+                        if (slot.formID != formID || ringOf(slot.lens) != ring) {
+                            continue;
+                        }
+                        ImGui::BulletText("%s", slot.topic.c_str());
+                        if (slot.provisional) {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("%s", "(waiting to see if it was answered)");
+                        }
+                    }
+                }
+            }
+
+            ImGui::TextDisabled("%s", "Each lens forgets only its own subjects: the oldest drops off when that "
+                                      "lens's list is full, and can be raised again. One never answered is "
+                                      "released as soon as she stops carrying it. The shared list holds anything "
+                                      "raised before lenses had their own, and anything raised by a lens that has "
+                                      "since been renamed or removed.");
         }
 
         void __stdcall RenderPending()

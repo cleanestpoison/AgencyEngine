@@ -11,11 +11,12 @@
 
    Blocks a lens may override, ALL of them top level and unconditional:
 
-     lens_task           what this turn is looking for, 2-4 sentences
-     lens_when_to_speak  the ordered list of what counts this turn
-     lens_examples       matched good/bad pairs in this lens's register
-     lens_focus          one line naming which part of the state is the agenda
-     lens_user_question  the question asked in the [ user ] turn
+     lens_task            what this turn is looking for, 2-4 sentences
+     lens_when_to_speak   the ordered list of what counts this turn
+     lens_examples        matched good/bad pairs in this lens's register
+     lens_focus           one line naming which part of the state is the agenda
+     lens_subject_source  the hard constraint naming where a subject may come from
+     lens_user_question   the question asked in the [ user ] turn
 
    Deliberately, no block sits inside an `{% raw %}{% if %}{% endraw %}` or a `{% raw %}{% for %}{% endraw %}`, and no lens
    reads a variable this file sets. Cross-template variable scope and blocks
@@ -233,8 +234,10 @@ Bad, in every register:
 - Never narrate {{ player.name }}'s inner life. What they did is fair game; what they think is their own.
 - No dialogue, no quoted speech, no invented lines — and no staging the exchange for them. What kind of speech this
   is, how far it goes, and what the other person does with it are not yours to write.
+{% block lens_subject_source %}
 - The topic must come from the speaker's own aspirations, history, standing with the people around them, or
   accumulated grievances. See the rule about reacting.
+{% endblock %}
 
 # Current state
 - Time: {{ game_time }}

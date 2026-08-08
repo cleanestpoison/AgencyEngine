@@ -2,11 +2,19 @@
 {# ==========================================================================
    Aspiration lens — "is anyone's agenda being ignored?"
 
-   The original single-prompt behaviour, narrowed. This turn is about what a
-   companion is trying to *do* and whether the party keeps walking away from
-   it. Everything interpersonal belongs to the relationship lens; if the only
-   thing here is that Serana is angry with Kaidan, that is a different turn's
-   question and this one should return silence.
+   The original single-prompt behaviour, narrowed twice. This turn is about
+   what a companion is trying to *do* and whether the party keeps walking away
+   from it. Everything interpersonal belongs to the relationship lens; if the
+   only thing here is that Serana is angry with Kaidan, that is a different
+   turn's question and this one should return silence.
+
+   The second narrowing: mundane appetites — rest, food, a bed, a drink, an
+   hour of somebody's company — are the ACTIVITY lens now, and this file no
+   longer offers them. That is not tidying. Left here they compete with the
+   activity lens for the same material, and the weighted draw then splits one
+   register across two names instead of asking two questions. What is left is
+   what the name always promised: goals, a quest being walked past, an order
+   of operations she disagrees with.
 
    Overrides prose only. The JSON contract, the constraints, the state dump
    and the forced-turn machinery are all in the base.
@@ -16,44 +24,57 @@
 You decide whether one of {{ player.name }}'s companions has something **they are trying to do** that they would
 raise unprompted, right now — and if so, you write the stage direction that makes them raise it.
 
-This turn is about agendas, not feelings. Someone wants something, or wants the party to do something, and has been
-waiting long enough to say so out loud.
+This turn is about agendas, not feelings and not appetites. Someone is trying to accomplish something, the party
+keeps not getting to it, and they have waited long enough to say so out loud.
 {% endblock %}
 
 {% block lens_when_to_speak %}
 - **An aspiration nobody has touched.** Something on their own list of what they are trying to do that the party has
   been walking past for days. This is the best case and usually the one that is available.
-- **A want with an object.** They want something specific and say so: rest, food, a road, a place, a person's time,
-  a thing they need and do not have. It may be a plain wish or a patience that has finally run out — both are the
-  same item.
-- **A proposal.** They think the party should do a specific thing, and have been thinking it long enough to raise
-  it rather than wait to be asked.
 - **An order of operations they disagree with.** Not that the plan is wrong, but that *this* is being done before
   *that*, and the delay is costing something they care about.
+- **A course of action they think the party should take.** They have worked out what ought to happen next and have
+  been holding it rather than waiting to be asked.
+- **Something they need in order to get on with it.** A thing, a decision, a stretch of somebody's attention that
+  their own errand has been stuck on. What makes it this turn's business is the errand behind it, not the wanting.
 - **Curiosity about what {{ player.name }} intends.** They have been wondering where this is going and they ask —
   because not knowing has started to get in the way of their own plans.
 - **The ground is speaking to them.** A place, a date, or an object in front of them touches something they have
   been meaning to do, hard enough to break the silence.
+
+**Not appetites, and not company.** Wanting a bed, a drink, a meal, a fight for its own sake, or an hour of
+somebody's time is a different turn's question — it is asked, and asked well, by the activity turn. If that is all
+anyone here has, this turn's answer is silence.
 {% endblock %}
 
 {% block lens_examples %}
 {% raw %}>{"speaker": "Serana", "target": "Dragonborn", "narration": "Four days of walking toward the Greybeards and not toward the moth priest, and Harkon reads his scroll a little sooner on each of them. She opens by asking them what the order of this is meant to be."}{% endraw %}
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "narration": "Lydia has not slept indoors in eleven days and has stopped pretending she does not mind. She starts by asking whether they are stopping in town tonight."}{% endraw %}
 {% raw %}>{"speaker": "Kaidan", "target": "Dragonborn", "narration": "Kaidan has been carrying his father's sword unrepaired since Ivarstead and there has been a forge in every town since. He wants to know when they are stopping long enough for him to see to it."}{% endraw %}
+{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "narration": "Lydia was told to hold Whiterun's business in mind and it has been a fortnight of walking away from it. She asks what is supposed to be happening about it, and when."}{% endraw %}
 
 Wrong turn for this lens, however good it is:
 {% raw %}>{"speaker": "Serana", "target": "Kaidan", "narration": "Kaidan has taken the front three times running and Serana has decided he is doing it to be seen doing it. She opens by asking him who he thinks is watching."}{% endraw %}
                           (real, but it is standing between two people — that is the relationship turn, not this one)
+{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "narration": "Lydia has not slept indoors in eleven days and has stopped pretending she does not mind. She starts by asking whether they are stopping in town tonight."}{% endraw %}
+                          (a real want, and a good line — but it is an appetite, which is the activity turn, not this one)
 {% endblock %}
 
 {% block lens_focus %}
-The agenda for this turn is **what each companion is trying to do** — read their aspirations first, and read
+The agenda for this turn is **what each companion is trying to accomplish** — read their aspirations first, and read
 everything else to work out whether the party has been walking away from one of them and for how long. Their
-standing with each other is background here, not the subject.
+standing with each other is background here, and what they would enjoy doing is a different turn's question.
+{% endblock %}
+
+{% block lens_subject_source %}
+- The topic must come from something the speaker is **trying to accomplish** — an aspiration of theirs, an errand
+  they are carrying, an order of operations they disagree with — evidenced in their aspirations, their history or
+  the events below. See the rule about reacting.
+- An appetite, a comfort, or wanting somebody's company is not an aspiration, however real it is. That is the
+  activity turn's material and taking it here is the same failure as inventing one.
 {% endblock %}
 
 {% block lens_user_question %}
-Does one of the companions above have something they are trying to do — an aspiration being ignored, a want that has
-been waiting, a proposal they have held onto — that they would raise right now, unprompted, and that did not come
-from the last few minutes?
+Does one of the companions above have something they are trying to accomplish — an aspiration being ignored, an
+errand stuck waiting, an order of operations they disagree with — that they would raise right now, unprompted, and
+that did not come from the last few minutes?
 {% endblock %}
