@@ -1,0 +1,78 @@
+# AgencyEngine — SkyrimNet plugin manifest.
+#
+# SkyrimNet auto-discovers plugin folders under
+# `Data/SKSE/Plugins/SkyrimNet/config/plugins/<plugin>/` and ingests this file.
+# Two purposes:
+#
+#   1. `variants:` declares named LLM-config profiles. When the plugin calls
+#      SendCustomPromptToLLM(promptName, variant, ctx, cb), SkyrimNet resolves
+#      the LLM config for that variant — its base config with whatever the user
+#      has overridden for this plugin layered on top. With no variant entry the
+#      call silently falls back to SkyrimNet's default Dialogue LLM.
+#
+#   2. `schema.fields:` declares the settings SkyrimNet shows in its own in-game
+#      UI. Impulse cadence and gating live in the plugin's own SKSE Menu Framework
+#      page instead — only the LLM plumbing belongs here, because only SkyrimNet
+#      can act on it.
+
+plugin:
+  name: AgencyEngine
+  version: "0.1.0"
+  description: "Companion interiority for SkyrimNet — periodic impulses of what a follower is noticing, wanting, or deciding, written from what has actually happened to them."
+
+variants:
+  - name: agencyengine_impulse
+    description: "The impulse writer — one to three sentences of companion interiority drawn from the recent event tail. Short creative writing, close in shape to SkyrimNet dialogue, so the base dialogue model is a sensible default. Impulses fire on an in-game-hour cadence and are never latency-critical, so a cheaper model is a reasonable trade here."
+  - name: agencyengine_resolve
+    description: "The expiry check for a recorded impulse — reads a companion's recent events and answers whether the subject she has been meaning to raise has since been had out. A yes/no read over a list rather than creative writing, and it runs on a slow in-game cadence with nothing waiting on it, so point this at the cheapest model that can follow a JSON contract."
+
+schema:
+  fields:
+    # All optional. Empty / 0 = inherit from the base SkyrimNet LLM config.
+    - name: "API Endpoint"
+      path: "llm.endpoint"
+      type: "string"
+      description: "Custom API endpoint URL for impulse generation (e.g. http://localhost:5000/v1 for a local model). Leave empty to use the base endpoint."
+      defaultValue: ""
+      category: "LLM Overrides"
+
+    - name: "API Key"
+      path: "llm.api_key"
+      type: "string"
+      description: "API key for the custom endpoint above. Leave empty to use the base API key."
+      defaultValue: ""
+      category: "LLM Overrides"
+
+    - name: "Model Name"
+      path: "llm.model_name"
+      type: "string"
+      description: "Override model for impulse generation. Impulses are short, infrequent and non-interactive, so they don't need a top-tier model. Leave empty to use the same model as dialogue."
+      defaultValue: ""
+      category: "LLM Overrides"
+
+    - name: "Temperature"
+      path: "llm.temperature"
+      type: "float"
+      description: "Override sampling temperature for impulses. Impulses are creative prose and tolerate a higher temperature than structured work. Set to 0 to inherit the base config value."
+      defaultValue: 0
+      min: 0.0
+      max: 2.0
+      category: "LLM Overrides"
+
+    - name: "Max Tokens"
+      path: "llm.max_tokens"
+      type: "int"
+      description: "Override max response tokens for impulses. An impulse is one to three sentences, so this can be set very low. Set to 0 to inherit the base config value."
+      defaultValue: 0
+      min: 0
+      max: 4096
+      category: "LLM Overrides"
+
+    - name: "Request Timeout (seconds)"
+      path: "llm.timeout"
+      type: "int"
+      description: "Override request timeout in seconds for impulse generation. Set to 0 to inherit the base config value."
+      defaultValue: 0
+      min: 0
+      max: 120
+      category: "LLM Overrides"

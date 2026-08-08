@@ -1,0 +1,16 @@
+build/
+install/
+_deploy/
+out/
+vcpkg_installed/
+compile_commands.json
+.vs/
+.cache/
+*.user
+
+# Per-machine build paths. Copy CMakeUserPresets.json.example and edit.
+CMakeUserPresets.json
+
+# Local working notes, not part of the mod.
+CLAUDE.md
+handoff.md

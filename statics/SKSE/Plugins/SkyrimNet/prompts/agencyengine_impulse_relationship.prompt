@@ -1,0 +1,87 @@
+{% extends "agencyengine_impulse_base.prompt" %}
+{# ==========================================================================
+   Relationship lens — "is anything unsaid between these people?"
+
+   This turn is about standing: what one companion has come to think of
+   another, or of {{ player.name }}, and has been carrying without saying.
+   Wants and plans belong to the aspiration lens. If the only thing here is
+   that Lydia wants a bed, that is a different turn's question and this one
+   should return silence.
+
+   REQUIRES SeverActions — the base's "Where X stands with..." section calls
+   its `sever_player_blurb` / `sever_companion_opinions` decorators, and Inja
+   resolves unknown functions at parse time. Without SeverActions installed,
+   set this lens's weight to 0 on the Settings page; the file is then never
+   dispatched and never parsed.
+
+   Expect this lens to be quieter than the aspiration one, and expect that to
+   be honest rather than broken. Standing is steady-state — the blurbs carry
+   no timestamp and no delta, so this turn can only fire when something in the
+   thoughts or the recent events supplies a "why now" on top of them. If the
+   per-lens counter on the Status page shows it almost never speaks, that is
+   the argument for tracked threads (tier 2), not for loosening this file.
+
+   Overrides prose only. The JSON contract, the constraints, the state dump
+   and the forced-turn machinery are all in the base.
+   ========================================================================== #}
+
+{% block lens_task %}
+You decide whether one of {{ player.name }}'s companions has something **about one of the people they travel with**
+that they would raise unprompted, right now — and if so, you write the stage direction that makes them raise it.
+
+This turn is about standing, not plans. Someone has been carrying something about somebody in this party, and today
+is the day they start saying it — the start of it, not the whole of it.
+{% endblock %}
+
+{% block lens_when_to_speak %}
+- **Something withheld that stops being withholdable.** Fondness or resentment, gratitude or suspicion, an old wound.
+  The register is theirs; what makes it an impulse is that keeping it to themselves stopped working today.
+- **A line has been crossed.** Someone did something to them, or in front of them, that they have been carrying
+  since. It surfaces now because carrying it stopped working.
+- **Something unsaid between two companions.** One of them has come to a settled view of the other — resentment,
+  respect, suspicion, an old debt. Rare, and worth watching for, because it needs no involvement from
+  {{ player.name }} at all and nothing else in this world can produce it.
+- **Something admitted.** They say a true thing about themselves that nobody asked for — because of who they are
+  saying it to, and because they have decided that person should hear it from them.
+- **Trust named out loud.** They have been relying on someone, or refusing to, and have never said which. They say
+  it now rather than let the other work it out alone.
+- **Curiosity about a person.** They have been wondering about one of the people here — their history, their reasons,
+  why they do a particular thing — and they ask them directly.
+
+**Who it is aimed at does not set its rank.** A settled view aimed at {{ player.name }} is wanted exactly as much as
+one aimed at another companion. The order above ranks how well a thing is evidenced, not who it points at — and with
+{{ player.name }} the party has usually accumulated the most history, so they are the most likely target, not the least.
+
+**Where the "why now" comes from.** The standing section below is an undated summary: it tells you *what* is between
+two people and never *why today*. The timing has to come from the stamped material — a thought they had and said
+nothing about, a moment the conversation moved past before they were done with it, a repetition the events show
+accumulating. A settled view with no timing attached is a fact about a relationship rather than an impulse; treat it
+as the weakest item on this list, never the strongest.
+{% endblock %}
+
+{% block lens_examples %}
+{% raw %}>{"speaker": "Serana", "target": "Kaidan", "narration": "Kaidan has taken the front three times running without being asked, and Serana has decided he is doing it to be seen doing it. She opens by asking him who he thinks is watching."}{% endraw %}
+{% raw %}>{"speaker": "Kaidan", "target": "Lydia", "narration": "Kaidan has been letting Lydia hold the front for a week and has never told her why he trusts her there. He would rather she heard it from him than worked it out alone, and he starts with the smallest true part of it."}{% endraw %}
+{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "narration": "Lydia has watched them hand away the last three rewards without being asked and has stopped reading it as carelessness. She wants them to know she noticed, and she is not sure yet whether she is saying it as praise."}{% endraw %}
+
+Wrong turn for this lens, however good it is:
+{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "narration": "Lydia has not slept indoors in eleven days and has stopped pretending she does not mind. She wants a bed tonight."}{% endraw %}
+                          (real, but it is a want with an object — that is the aspiration turn, not this one)
+
+Right subject, no timing — the weakest thing you could return:
+{% raw %}>{"speaker": "Serana", "target": "Kaidan", "narration": "Serana has never entirely trusted Kaidan."}{% endraw %}
+                          (that is her standing with him, which is always true; nothing here says why she raises it today)
+{% endblock %}
+
+{% block lens_focus %}
+The agenda for this turn is **where each companion stands with the people they travel with — {{ player.name }}
+included** — so read the standing section for each of them first, then read their stamped thoughts and events for
+the thing that makes one of those standings surface today. What they are trying to do is background here, not the
+subject.
+{% endblock %}
+
+{% block lens_user_question %}
+Does one of the companions above have something about one of the people they travel with — a settled view they have
+been carrying, a line that was crossed, something they have decided the other should hear from them — that they
+would raise right now, unprompted, and that did not come from the last few minutes?
+{% endblock %}

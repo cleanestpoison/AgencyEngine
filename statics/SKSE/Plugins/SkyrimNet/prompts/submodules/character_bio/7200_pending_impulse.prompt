@@ -1,0 +1,101 @@
+{% if render_mode == "full" or render_mode == "thoughts" %}
+{# ==========================================================================
+   7200_pending_impulse.prompt — AgencyEngine
+
+   NOTE THE SHAPE: the render_mode guard is line 1, above this comment, and it
+   has to stay there. SkyrimNet validates every character_bio submodule and
+   requires both `render_mode` and an `{% raw %}{% if %}{% endraw %}` within the FIRST FIVE LINES —
+   otherwise it logs "character_bio submodule validation failed" and raises an
+   in-game shame banner naming this file. An opening comment block pushed the
+   guard past line 5 and tripped exactly that.
+
+   Files in prompts/submodules/character_bio/ are concatenated into each
+   character's bio in filename order, so the numeric prefix picks the position:
+   after SkyrimNet's own long-term memories block (7000/7100) and before the
+   speech style (9990). `npc` is the character whose bio is being rendered.
+
+   Two decorators, both answered by AgencyEngine.dll rather than by Papyrus.
+   agencyengine_pending_impulse returns the text; agencyengine_pending_state
+   returns "carried" or "spoken" and picks which wording below renders. Both are
+   empty when there is nothing pending, which is the usual case.
+
+   The two wordings are not interchangeable. An entry survives a speaking turn
+   now — the loop stopped deleting it at dispatch, because "she said it" and "it
+   got anywhere" are different questions. Rendering the carried wording over a
+   spoken entry would tell her she has not said a thing she just said, on every
+   dialogue call, and she would say it again immediately.
+
+   ---------------------------------------------------------------------------
+   THE render_mode GUARD IS LOAD-BEARING. DO NOT DROP IT.
+
+   Character bios are rendered into OTHER NPCs' prompts, not only their own:
+
+     * components/context/scene_context.prompt renders every nearby NPC with
+       render_character_profile("short_inline", npc.UUID) — so without a guard,
+       one companion's private agenda appears in the prompt of every follower
+       standing next to her. That leak is the entire reason this file exists
+       instead of an event; see PendingImpulse.h for the two measurements.
+     * target_selectors/dialogue_speaker_selector.prompt does the same for
+       candidate speakers.
+     * submodules/system_head/0100_actor_bios.prompt renders the *listener's*
+       bio in render_mode "dialogue_target" — so including that mode would show
+       her agenda to the very person she has not raised it with yet.
+
+   "full" and "thoughts" are her own prompts and nobody else's. Nothing else
+   qualifies. There is a second reason beyond the leak: per SkyrimNet's own
+   docs, evaluating a mod-added decorator on an NPC who is neither speaker nor
+   target raises "decorator function not found", so an unguarded block errors
+   as well as leaks.
+
+   Verified live 2026-08-06: rendered exactly once across a whole session, in
+   `You are Serana, ... speaking to Lynly Star-Sung` — her own prompt, nobody
+   else's, zero "decorator function not found".
+
+   7000_memories_and_progression.prompt solves the identical problem the
+   identical way; copy from it rather than from anything else if this needs
+   restructuring.
+
+   ---------------------------------------------------------------------------
+   TUNING. The body below restrains *how* she opens the subject, not *whether*
+   she ever does. An earlier draft said "most of the time it will not come up";
+   that was a second layer of suppression on top of the impulse prompt's own,
+   which has already decided this is worth carrying by the time this renders.
+   If she now steers into it too hard, put a hedge back here — do not reach for
+   an IMPORTANT/priority marker in the other direction. This is a bio block,
+   and a priority marker in a bio reads as an objective to discharge, which is
+   the nag failure the impulse prompt spends several paragraphs avoiding.
+   ========================================================================== #}
+{% set agencyengine_pending = agencyengine_pending_impulse(npc.UUID) %}
+{% set agencyengine_state = agencyengine_pending_state(npc.UUID) %}
+{% if agencyengine_pending != "" %}
+{% if agencyengine_state == "spoken" %}
+## Something {{ decnpc(npc.UUID).name }} has raised and not had answered
+
+You said this. It was not taken up — it was brushed past, deferred, or lost in
+whatever came next.
+
+> {{ agencyengine_pending }}
+
+You have had your say, and you are not looking to say it again. It sits between
+you and them, and it colours how you are with them: a little shorter, a little
+further back than you would otherwise be.
+
+Do not re-open it. If they come to it, you have plenty to say.
+{% else %}
+## Something {{ decnpc(npc.UUID).name }} has been meaning to raise
+
+This is yours and nobody else's. You have not said it out loud, and nobody
+around you knows it is there.
+
+> {{ agencyengine_pending }}
+
+It is a subject you have been carrying, not a script and not a decision. You
+have been waiting for an opening. It is what you are half thinking about
+underneath whatever you are actually saying, and it is where you steer when
+the talk gives you room.
+
+Raise it when there is room. Open it small — you have not committed to how it
+goes, and you would still walk it back if it did not land.
+{% endif %}
+{% endif %}
+{% endif %}

@@ -1,0 +1,119 @@
+#!/usr/bin/env pwsh
+#
+# package.ps1 — build, then zip the deployed mod folder into an archive that
+# MO2 / Vortex can install directly.
+#
+# Runs build.ps1 first so _deploy/AgencyEngine/ reflects current source (the
+# compiled DLL plus everything under statics/). Then packages the folder's
+# *contents* — not the folder itself — so the archive's top-level entry is
+# SKSE/, which is what a direct install expects at the mod root.
+#
+# Usage:
+#   pwsh -File package.ps1                        # version read from CMakeLists.txt
+#   pwsh -File package.ps1 -Version 0.2.0
+#   pwsh -File package.ps1 -Version 0.2.0 -OutputDir C:\Releases
+#   pwsh -File package.ps1 -SkipBuild             # package what's already deployed
+
+[CmdletBinding()]
+param(
+    [Parameter(Position = 0)]
+    [string]$Version,
+
+    [string]$OutputDir = (Join-Path $PSScriptRoot 'out'),
+
+    [string]$Preset = 'local-release',
+
+    [switch]$SkipBuild
+)
+
+$ErrorActionPreference = 'Stop'
+
+# --- 1. Resolve the version -------------------------------------------------
+#
+# Default to the project version in CMakeLists.txt so the archive name can't
+# drift from what the DLL reports to SKSE.
+if (-not $Version) {
+    $cmakeLists = Get-Content (Join-Path $PSScriptRoot 'CMakeLists.txt') -Raw
+    if ($cmakeLists -match 'project\s*\(\s*AgencyEngine\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)') {
+        $Version = $Matches[1]
+    } else {
+        throw "Couldn't read the project version out of CMakeLists.txt. Pass -Version explicitly."
+    }
+}
+$Version = $Version -replace '^[vV]', ''
+
+# --- 2. Build ---------------------------------------------------------------
+#
+# Any build failure aborts here; packaging a stale or partial mod folder would
+# ship a broken archive.
+if (-not $SkipBuild) {
+    Write-Host '==> Running build.ps1 to sync the deployed mod folder' -ForegroundColor Cyan
+    & (Join-Path $PSScriptRoot 'build.ps1') build -Preset $Preset
+    if ($LASTEXITCODE -ne 0) {
+        throw "build.ps1 failed (exit $LASTEXITCODE); refusing to package."
+    }
+}
+
+# --- 3. Sanity-check the deployed folder ------------------------------------
+#
+# The deploy root matches CMakeUserPresets.json's SKYRIM_MODS_FOLDER; read it
+# from the preset rather than duplicating the path here.
+$presetFile = Join-Path $PSScriptRoot 'CMakeUserPresets.json'
+$userPresets = Get-Content $presetFile -Raw | ConvertFrom-Json
+$modsFolder = $null
+foreach ($name in @($Preset, 'local-base')) {
+    $entry = $userPresets.configurePresets | Where-Object { $_.name -eq $name }
+    if ($entry -and $entry.environment.SKYRIM_MODS_FOLDER) {
+        $modsFolder = $entry.environment.SKYRIM_MODS_FOLDER
+        break
+    }
+}
+if (-not $modsFolder) {
+    throw "Couldn't resolve SKYRIM_MODS_FOLDER from $presetFile."
+}
+
+$modFolder = Join-Path $modsFolder 'AgencyEngine'
+if (-not (Test-Path -LiteralPath $modFolder -PathType Container)) {
+    throw "Expected mod folder does not exist: $modFolder (run a build first)"
+}
+
+# A mod folder without the DLL would install cleanly and do nothing — catch it
+# here rather than in someone's game.
+$dll = Join-Path $modFolder 'SKSE\Plugins\AgencyEngine.dll'
+if (-not (Test-Path -LiteralPath $dll)) {
+    throw "No AgencyEngine.dll in $modFolder — the build didn't deploy."
+}
+$prompt = Join-Path $modFolder 'SKSE\Plugins\SkyrimNet\prompts\agencyengine_impulse.prompt'
+if (-not (Test-Path -LiteralPath $prompt)) {
+    throw "No agencyengine_impulse.prompt in $modFolder — the statics deploy didn't run."
+}
+
+Write-Host '==> Mod folder contents:' -ForegroundColor Cyan
+Get-ChildItem -LiteralPath $modFolder -Recurse -File |
+    ForEach-Object { '    ' + $_.FullName.Substring($modFolder.Length + 1) }
+
+# --- 4. Package -------------------------------------------------------------
+#
+# includeBaseDirectory = $false puts the folder's contents at the archive root,
+# which is what MO2 / Vortex expect from a direct-install archive.
+$archivePath = Join-Path $OutputDir "AgencyEngine-v$Version.zip"
+
+if (-not (Test-Path -LiteralPath $OutputDir -PathType Container)) {
+    New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+}
+if (Test-Path -LiteralPath $archivePath) {
+    Remove-Item -LiteralPath $archivePath -Force
+}
+
+Write-Host "==> Packaging $modFolder -> $archivePath" -ForegroundColor Cyan
+
+Add-Type -AssemblyName 'System.IO.Compression.FileSystem'
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $modFolder,
+    $archivePath,
+    [System.IO.Compression.CompressionLevel]::Optimal,
+    $false
+)
+
+$archiveSize = (Get-Item -LiteralPath $archivePath).Length
+Write-Host ('==> Done: {0} ({1:N2} MB)' -f $archivePath, ($archiveSize / 1MB)) -ForegroundColor Green

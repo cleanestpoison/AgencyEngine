@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "agencyengine",
+  "version-string": "0.1.0",
+  "description": "Follower agency and relationship impulses for SkyrimNet",
+  "dependencies": [
+    "commonlibsse-ng-fork",
+    "directxtk",
+    "nlohmann-json"
+  ]
+}

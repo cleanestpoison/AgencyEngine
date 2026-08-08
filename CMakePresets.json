@@ -1,0 +1,24 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "installDir": "${sourceDir}/install/${presetName}",
+      "architecture": { "value": "x64", "strategy": "external" },
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "cl.exe",
+        "CMAKE_CXX_FLAGS": "/permissive- /Zc:preprocessor /EHsc /MP /W4 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -DUNICODE -D_UNICODE",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "//VCPKG_TARGET_TRIPLET-rationale": "x64-windows-static-md: static-link our deps (no third-party DLLs at runtime) but use the DYNAMIC MSVC CRT (/MD). SkyrimNet's PublicAPI.h returns std::string by value across the DLL boundary, which requires both DLLs to share one heap — i.e. the same MSVC version and dynamic CRT linkage.",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md",
+        "//VCPKG_OVERLAY_PORTS-rationale": "ports/ carries a local commonlibsse-ng-fork whose only change is a refreshed CommonLibVR tarball SHA512 — GitHub re-compressed its generated source archives, so the registry port's recorded hash no longer matches what downloads. Drop the overlay once upstream refreshes it.",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/ports",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ]
+}

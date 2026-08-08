@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
+  "name": "commonlibsse-ng-fork",
+  "version-date": "2024-07-06",
+  "port-version": 1,
+  "description": "A reverse engineered resource for developing SKSE plugins, supporting portable plugins that work across AE, SE, and VR.",
+  "homepage": "https://github.com/alandtse/CommonLibVR",
+  "license": "MIT",
+  "supports": "windows & x64",
+  "dependencies": [
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    },
+    "directxmath",
+    "directxtk",
+    "fmt",
+    "rapidcsv",
+    "spdlog",
+    "xbyak"
+  ]
+}

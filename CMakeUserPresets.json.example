@@ -1,0 +1,32 @@
+{
+  "//": "Copy to CMakeUserPresets.json and point the three paths at your own install. That file is gitignored — it is per-machine by design.",
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "local-base",
+      "hidden": true,
+      "inherits": ["base"],
+      "environment": {
+        "VCPKG_ROOT": "C:/path/to/vcpkg",
+
+        "//SKYRIM_MODS_FOLDER-rationale": "Staging dir inside the repo, NOT your live MO2 mods folder. OUTPUT_FOLDER is $SKYRIM_MODS_FOLDER/AgencyEngine, so pointing this at the live mods folder would have every build write into the active modlist. Copy across deliberately once a build is verified.",
+        "SKYRIM_MODS_FOLDER": "${sourceDir}/_deploy",
+
+        "//SKYRIMNET_DIR-rationale": "Must be explicit — the installed SkyrimNet folder is version-suffixed, so the $SKYRIM_MODS_FOLDER/SkyrimNet auto-resolution never hits. This is the build whose PublicAPI.h we compile against.",
+        "SKYRIMNET_DIR": "C:/path/to/mods/SkyrimNet-beta23-rc2"
+      }
+    },
+    {
+      "name": "local-release",
+      "inherits": ["local-base"],
+      "displayName": "Local Release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "local-debug",
+      "inherits": ["local-base"],
+      "displayName": "Local Debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    }
+  ]
+}

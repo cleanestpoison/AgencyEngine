@@ -1,0 +1,83 @@
+{# ==========================================================================
+   agencyengine_impulse_resolved.prompt — AgencyEngine
+
+   Is the subject a companion is carrying still live, or is it done?
+
+   Two cases, and they are not the same question. When spoken is false she has
+   never said it, so "done" means the talk covered it without her. When spoken
+   is true the loop already gave her the turn — her raise is the premise, not
+   evidence, and "done" means somebody engaged with what she said. Counting her
+   own raise as resolution would mark every beat done the moment she opens her
+   mouth, which hides the one thing the mod is meant to notice.
+
+   true clears her bio entry and suppresses the subject for six beats; false
+   leaves it live and a TTL releases it later. false is the recoverable answer.
+
+   Dispatched one entry at a time by Director::PumpResolutionCheck against the
+   `agencyengine_resolve` variant. Context: npc_name, target_name, impulse,
+   spoken, marked_at, game_time, recent_events. Anything unparseable is treated
+   as false.
+   ========================================================================== #}
+[ system ]
+# Task
+
+{% if spoken %}
+{{ npc_name }} raised this with {{ target_name }} at {{ marked_at }}. That she said it is given. Judge whether
+anyone met it.
+{% else %}
+{{ npc_name }} has been meaning to raise this with {{ target_name }} and has not said it. Judge whether it has been
+dealt with anyway.
+{% endif %}
+
+> {{ impulse }}
+
+It is now {{ game_time }}. Answer from the events below and nothing else.
+
+# What has happened to {{ npc_name }} since
+
+{% for event in recent_events %}
+- [{{ short_time(event.gameTimeStr) }}] {{ format_event(event, "recent_events") }}
+{% endfor %}
+
+# Decide
+
+{% if spoken %}
+**resolved: true** when someone met it — answered it, agreed, refused, argued it out, or events made it moot.
+A refusal counts: she does not have to have got what she wanted, only an answer.
+
+**resolved: false** when it went past — changed subject, walked off, silence, or a deferral like "sure" or "later".
+Deferral is not an answer.
+{% else %}
+**resolved: true** when it reached the table without her — someone else raised it, or events settled it, so raising
+it now would repeat what already happened.
+
+**resolved: false** when nothing touched it, when only an adjacent subject came up, or when it was mentioned and
+dropped without being addressed.
+{% endif %}
+
+Also false when you cannot tell. false is recoverable; true buries the subject.
+
+Do not judge whether the subject is worth raising or whether she is right. Only whether it has been met.
+
+# Output
+
+Only a JSON object. No prose, no markdown, no code fence.
+
+```
+{% raw %}{"resolved": true}{% endraw %}
+```
+or
+```
+{% raw %}{"resolved": false}{% endraw %}
+```
+[ end system ]
+
+[ user ]
+{% if spoken %}
+Did anyone meet what {{ npc_name }} raised, or did it go past?
+{% else %}
+Has this been dealt with without {{ npc_name }} raising it?
+{% endif %}
+
+JSON only.
+[ end user ]
