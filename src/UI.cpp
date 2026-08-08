@@ -490,7 +490,8 @@ namespace AgencyEngine::UI
             HelpMarker("Adds per-tick snapshot lines and full context/response payloads to\n"
                        "Documents/My Games/Skyrim Special Edition/SKSE/AgencyEngine.log.\n"
                        "The Director ticks once a second, so this is the difference between a log you can\n"
-                       "read and one you have to grep.");
+                       "read and one you have to grep. The two previous logs are kept alongside it as\n"
+                       "AgencyEngine.log.1 and AgencyEngine.log.2.");
 
             ImGui::SeparatorText("Configuration file");
             ImGui::TextDisabled("%s", Settings::FilePath().string().c_str());
