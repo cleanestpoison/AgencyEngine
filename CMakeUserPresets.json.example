@@ -32,8 +32,8 @@
       "name": "local-tests",
       "inherits": ["local-base"],
       "displayName": "Local Tests",
-      "description": "Ledger tests. Its own binary dir, so they never appear in a plugin build and a test run never relinks the DLL. Build it, then: ctest --test-dir build/local-tests",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "AGENCYENGINE_BUILD_TESTS": "ON" }
+      "description": "Ledger tests. Its own binary dir, so they never appear in a plugin build and a test run never relinks the DLL. Release rather than Debug on purpose: a Debug build deploys a .pdb into the shared _deploy folder, and a .pdb carries the source paths and the username. Build it, then: ctest --test-dir build/local-tests",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "AGENCYENGINE_BUILD_TESTS": "ON" }
     }
   ]
 }

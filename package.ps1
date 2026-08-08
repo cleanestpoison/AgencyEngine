@@ -108,8 +108,8 @@ Get-ChildItem -LiteralPath $modFolder -Recurse -File |
 
 # --- 4. Package -------------------------------------------------------------
 #
-# includeBaseDirectory = $false puts the folder's contents at the archive root,
-# which is what MO2 / Vortex expect from a direct-install archive.
+# Contents at the archive root, not the folder itself, which is what MO2 /
+# Vortex expect from a direct-install archive.
 $archivePath = Join-Path $OutputDir "AgencyEngine-v$Version.zip"
 
 if (-not (Test-Path -LiteralPath $OutputDir -PathType Container)) {
@@ -119,15 +119,41 @@ if (Test-Path -LiteralPath $archivePath) {
     Remove-Item -LiteralPath $archivePath -Force
 }
 
+# NEVER ship a .pdb. It embeds the full source path of every translation unit,
+# which on this machine means the drive layout AND the Windows username, in
+# plain ASCII inside a 60 MB file nobody would think to open. A Debug build
+# deploys one next to the DLL, and _deploy/ is shared across presets — so it
+# only takes one debug build, ever, for the next release archive to carry it.
+# The whole point of the deploy folder is that it mirrors the mod folder, so
+# the guard belongs here, at the one place where files become an archive.
+#
+# Excluded rather than deleted: the deploy folder is a build output this script
+# does not own, and a debugger wants the .pdb exactly where it is.
+$excluded = @('.pdb', '.ilk', '.exp', '.lib')
+$files = Get-ChildItem -LiteralPath $modFolder -Recurse -File |
+    Where-Object { $excluded -notcontains $_.Extension.ToLowerInvariant() }
+
+$skipped = Get-ChildItem -LiteralPath $modFolder -Recurse -File |
+    Where-Object { $excluded -contains $_.Extension.ToLowerInvariant() }
+foreach ($file in $skipped) {
+    Write-Host ('    excluded from the archive: {0}' -f
+        $file.FullName.Substring($modFolder.Length + 1)) -ForegroundColor Yellow
+}
+
 Write-Host "==> Packaging $modFolder -> $archivePath" -ForegroundColor Cyan
 
 Add-Type -AssemblyName 'System.IO.Compression.FileSystem'
-[System.IO.Compression.ZipFile]::CreateFromDirectory(
-    $modFolder,
-    $archivePath,
-    [System.IO.Compression.CompressionLevel]::Optimal,
-    $false
-)
+$zip = [System.IO.Compression.ZipFile]::Open($archivePath, 'Create')
+try {
+    foreach ($file in $files) {
+        # Forward slashes: the zip spec asks for them, and MO2 is happier.
+        $entryName = $file.FullName.Substring($modFolder.Length + 1) -replace '\\', '/'
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $zip, $file.FullName, $entryName, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+    }
+} finally {
+    $zip.Dispose()
+}
 
 $archiveSize = (Get-Item -LiteralPath $archivePath).Length
 Write-Host ('==> Done: {0} ({1:N2} MB)' -f $archivePath, ($archiveSize / 1MB)) -ForegroundColor Green
