@@ -36,8 +36,23 @@ namespace AgencyEngine
     // cannot remember anything: a fresh roll per tick produces runs, and on a
     // two-game-hour interval four aspiration turns running is most of an
     // in-game day in one register. The Director knows what it picked last.
+    //
+    // A lens is *content*, not configuration. Its name, its prompt file and its
+    // proposal semantics are properties of a file that ships in the archive
+    // beside the DLL — nobody can author them by typing into the settings page,
+    // and a prompt name that doesn't resolve costs the whole impulse silently.
+    // Only `weight` and `ledgerSlots` are preferences. So the shipped roster is
+    // kBuiltinLenses below and the config file stores overrides against it,
+    // keyed by `id`. A lens added in a later release then appears on its own,
+    // with its shipped weight, in a config that already exists.
     struct Lens
     {
+        // Stable key, used only to match a config override to a shipped lens.
+        // Never displayed, never edited, and deliberately not `name` — the name
+        // is free text a user can rename, and a rename must cost them their
+        // tuning no more than it costs them the prompt file. Empty marks a
+        // hand-authored lens, which has no shipped row to be an override of.
+        char id[32] = "";
         char name[64] = "";     // shown in the UI and written to the log
         char prompt[128] = "";  // resolves to prompts/<prompt>.prompt
         // Relative weight. 0 disables the lens outright, which is also how you
@@ -69,6 +84,55 @@ namespace AgencyEngine
     };
 
     inline constexpr int kMaxLenses = 6;
+
+    // The lens roster this build ships, and the source of every default in the
+    // table below. Changing a weight here changes it for every install that has
+    // not moved that slider — see Settings::Save, which writes only what differs
+    // from the shipped value, so a default is not frozen by the act of opening
+    // the settings page and saving something unrelated.
+    //
+    // Weights: Activity takes the largest share because it has the most
+    // material — daily life happens every day, where an ignored aspiration or an
+    // unsaid standing has to accumulate first. Aspiration takes the smallest of
+    // the three now that its mundane appetites have moved to Activity, which is
+    // what stops the two of them competing for one register under two names.
+    //
+    // Adding a row: give it an id that will never change (the ledger and the
+    // config both key on it), and keep the count under kMaxLenses — the trailing
+    // slots are what a user's own lenses occupy.
+    inline constexpr Lens kBuiltinLenses[] = {
+        { "aspiration", "Aspiration", "agencyengine_impulse_aspiration", 35 },
+        { "relationship", "Relationship", "agencyengine_impulse_relationship", 25 },
+        { "activity", "Activity", "agencyengine_impulse_activity", 40, true, 3 },
+    };
+    inline constexpr int kBuiltinLensCount = static_cast<int>(std::size(kBuiltinLenses));
+    static_assert(kBuiltinLensCount <= kMaxLenses, "the shipped roster has to fit in the table");
+
+    // The shipped roster as the settings table holds it: builtins first, in
+    // roster order, then empty slots for hand-authored lenses.
+    inline constexpr std::array<Lens, kMaxLenses> DefaultLenses()
+    {
+        std::array<Lens, kMaxLenses> table{};
+        for (int i = 0; i < kBuiltinLensCount; ++i) {
+            table[static_cast<std::size_t>(i)] = kBuiltinLenses[i];
+        }
+        return table;
+    }
+
+    // The shipped row this one is an override of, or nullptr for a lens the user
+    // wrote themselves (or one whose id this build no longer knows).
+    inline constexpr const Lens* BuiltinLensFor(std::string_view id)
+    {
+        if (id.empty()) {
+            return nullptr;
+        }
+        for (const auto& builtin : kBuiltinLenses) {
+            if (id == builtin.id) {
+                return &builtin;
+            }
+        }
+        return nullptr;
+    }
 
     struct Settings
     {
@@ -232,17 +296,9 @@ namespace AgencyEngine
         // behind them. Weighting them all to zero switches the loop off rather
         // than falling back to anything, and the hold says so.
         //
-        // Weights: Activity takes the largest share because it has the most
-        // material — daily life happens every day, where an ignored aspiration
-        // or an unsaid standing has to accumulate first. Aspiration takes the
-        // smallest of the three now that its mundane appetites have moved to
-        // Activity, which is what stops the two of them competing for one
-        // register under two names.
-        Lens  lenses[kMaxLenses] = {
-            { "Aspiration", "agencyengine_impulse_aspiration", 35 },
-            { "Relationship", "agencyengine_impulse_relationship", 25 },
-            { "Activity", "agencyengine_impulse_activity", 40, true, 3 },
-        };
+        // The shipped roster, plus whatever the config overrode on top of it.
+        // See kBuiltinLenses for why the roster lives in the build.
+        std::array<Lens, kMaxLenses> lenses = DefaultLenses();
 
         // Comma-separated SkyrimNet event types; empty = all.
         char  eventTypeFilter[192] = "";

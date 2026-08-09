@@ -51,6 +51,13 @@ Everything is visible and tunable in-game through the **SKSE Menu Framework** co
 
 Settings persist to `Data/SKSE/Plugins/AgencyEngine.json` (press *Save settings*; they load on game start).
 
+**No config file ships with the mod, on purpose.** The file holds only the settings you have actually changed;
+everything absent from it is whatever this version of the mod ships, and so follows the mod when a later version
+retunes it. A shipped file — or one that wrote back every key whether you'd touched it or not — would freeze every
+default at the moment you installed, and every update after that would be fighting it. `AgencyEngine.json.example`
+is in the archive as documentation of what the keys are; it is never read, and copying it over the real file is not
+a supported way to configure anything (it has comments in it, and JSON has no comments).
+
 ## Requirements
 
 - SKSE64, Address Library
@@ -130,12 +137,18 @@ The first configure builds CommonLibSSE-NG from source and takes a while.
 pwsh -File build.ps1 test -Preset local-tests   # configure if needed, build, then ctest
 ```
 
-One target, and deliberately not part of the default build: `AGENCYENGINE_BUILD_TESTS` is `OFF`, so a plain clone
-builds the plugin and nothing else. There is exactly one thing here worth testing offline — the **ledger**, which is
-pure state with no game, no SkyrimNet and no LLM behind it, and which can regress an already-shipped lens with no
-visible symptom (a companion simply stops raising things, days later, because another lens evicted her settled
-subjects). The tests call it with the arguments the Director passes; `tests/shim/Logging.h` stands in for the
-spdlog/SKSE header, which doesn't exist outside the game process.
+Deliberately not part of the default build: `AGENCYENGINE_BUILD_TESTS` is `OFF`, so a plain clone builds the plugin
+and nothing else. Two targets, on the two things here worth testing offline — both pure state with no game, no
+SkyrimNet and no LLM behind them, and both able to regress with no visible symptom:
+
+- the **ledger**, which can quietly break an already-shipped lens (a companion simply stops raising things, days
+  later, because another lens evicted her settled subjects);
+- the **config**, whose failures are *upgrade* failures — a weight set two versions ago silently reverting, a
+  retuned default never reaching an install that already exists, an old-format file losing what it meant. None of
+  those appear in a log, and none are reproducible by hand once the old file has been overwritten.
+
+The tests call both with the arguments the plugin passes; `tests/shim/Logging.h` stands in for the spdlog/SKSE
+header, which doesn't exist outside the game process.
 
 Everything else is verified in game, deliberately: there is no offline renderer for Inja or its decorators, so every
 prompt change is judged from the per-lens spoken/quiet counters, the History page's context payload, the ledger view
@@ -210,8 +223,11 @@ SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_aspiration.prompt
 SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_relationship.prompt
 SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_activity.prompt
 SKSE/Plugins/SkyrimNet/config/plugins/AgencyEngine/manifest.yaml
+SKSE/Plugins/AgencyEngine.json.example                                 (documentation; never read)
 Scripts/AgencyEngine_Bridge.pex
 ```
+
+There is no `AgencyEngine.json` in that list, and that is the point — see *Settings* above.
 
 Every lens shares the one `agencyengine_impulse` LLM variant — they are the same job at the same cost, so one
 variant means one place in SkyrimNet's UI to point impulse generation at a cheaper model.
@@ -243,10 +259,18 @@ when that kind isn't there.
 Aspiration deliberately does **not** own mundane appetites — rest, food, a bed, a drink. Those are Activity's, and
 leaving them in both would split one register across two names instead of asking two questions.
 
-**Upgrading:** an existing `AgencyEngine.json` replaces the shipped lens list wholesale, so that a lens you deleted
-stays deleted. That means Activity does **not** appear by itself on an install that already has a settings file —
-add a row on the Lenses tab with the prompt `agencyengine_impulse_activity`, tick **Proposals** and set **Slots** to
-3. Your existing weights and tuning are untouched either way.
+**The roster is not configuration.** Which lenses exist, what each is called, which prompt file it asks through and
+whether it produces proposals all come from the mod, because they describe prompt files that ship in the archive
+beside the DLL — there is nothing there a settings page could usefully let you author, and a prompt name that
+doesn't resolve costs the whole impulse and reads as a lens that is simply always quiet. What is yours is the
+**weight** and the **slot count**, and those are all the config file stores.
+
+So a lens added in a later version turns up on its own, at its shipped weight, in a settings file that already
+exists — and a lens whose prompt is fixed in a later version is fixed for you too. Weight 0 is how you switch one
+off; a version that has been upgraded from the old format keeps every weight you set, and any lens you had deleted
+outright comes back switched off rather than at its shipped weight.
+
+Lenses you write yourself are a separate list and are stored whole — see *Writing your own lens* below.
 
 They share a spine. `agencyengine_impulse_base.prompt` owns the JSON contract, the hard constraints, the state dump
 and the forced-turn machinery; each lens `{% extends %}`es it and overrides six prose blocks (`lens_task`,
@@ -282,9 +306,10 @@ the loop, and the Status page says so rather than quietly asking a broader quest
 
 ### Topics and proposals
 
-Each lens row declares whether it produces **topics** or **proposals**, and two things branch on that declaration.
-It is a checkbox on the row, never inferred from the lens's name — the name is a label you can edit, and a rename
-that silently changed how an impulse resolves would fail as wrong behaviour rather than as an error.
+Each lens declares whether it produces **topics** or **proposals**, and two things branch on that declaration. It is
+declared, never inferred from the lens's name — for a shipped lens it comes from the mod along with the prompt file,
+and for one you wrote yourself it is a checkbox on the row. Inferring it from the name would mean a rename silently
+changing how an impulse resolves, which fails as wrong behaviour rather than as an error.
 
 A **topic** is met when somebody answers it: agreeing, refusing, arguing it out. A **proposal** asks the party to
 *do* something, and agreement doesn't settle it — "yes, let's spar" followed by no sparring is a deferral, and
@@ -303,6 +328,16 @@ raised by a lens that has since been renamed or deleted. Its slots suppress for 
 evicted by another shared-ring slot — so a lens with three slots can't drop six settled subjects on the first tick
 after an upgrade, and renaming a row doesn't strand what it had already settled. They leave one at a time, as their
 subjects come round again and get rewritten under a live lens.
+
+### Writing your own lens
+
+The blank rows at the bottom of the Lenses tab are yours. Fill in a name, a prompt file (which resolves to
+`Data/SKSE/Plugins/SkyrimNet/prompts/<name>.prompt` and must `{% extends %}` `agencyengine_impulse_base.prompt`), a
+weight, whether it produces proposals, and its slot count. Six lenses is the table's limit, of which three are the
+mod's own.
+
+A lens you wrote has no shipped row behind it, so unlike the mod's own it is stored whole in the config file, under
+`customLenses` — nothing in an update can add to it, change it or take it away.
 
 ## Tuning the impulse
 

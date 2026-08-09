@@ -356,6 +356,10 @@ namespace AgencyEngine::UI
                  "than each individual tick.");
             Note("Weight 0 disables a lens outright - which is also how you switch off a lens whose prompt "
                  "needs a mod you do not have installed.");
+            Note("The mod's own lenses are shown greyed: their name, prompt file and kind come from the mod, so "
+                 "an update can add one or fix one and you keep your weights. Only the weight and the slot count "
+                 "are yours, and only those are written to the config file. The blank rows at the bottom are for "
+                 "a prompt you wrote yourself.");
 
             int total = 0;
             for (const auto& lens : s.lenses) {
@@ -378,6 +382,14 @@ namespace AgencyEngine::UI
 
                 for (int i = 0; i < kMaxLenses; ++i) {
                     auto& lens = s.lenses[i];
+                    // A row the mod ships. Its name and prompt file describe a
+                    // file in the archive, so they are shown rather than edited —
+                    // the old page let both be typed over, and the only thing
+                    // that could do was point a lens at a prompt that doesn't
+                    // resolve, which costs the whole impulse and looks like a
+                    // lens that is simply always quiet.
+                    const bool shipped = BuiltinLensFor(lens.id) != nullptr;
+
                     // Unique ImGui IDs per row: without the PushID every row's
                     // widgets share a label, and typing in one writes to
                     // whichever row drew first.
@@ -385,12 +397,20 @@ namespace AgencyEngine::UI
                     ImGui::TableNextRow();
 
                     ImGui::TableNextColumn();
-                    ImGui::SetNextItemWidth(-1.0f);
-                    dirty |= ImGui::InputText("##name", lens.name, sizeof(lens.name));
+                    if (shipped) {
+                        ImGui::TextDisabled("%s", lens.name);
+                    } else {
+                        ImGui::SetNextItemWidth(-1.0f);
+                        dirty |= ImGui::InputText("##name", lens.name, sizeof(lens.name));
+                    }
 
                     ImGui::TableNextColumn();
-                    ImGui::SetNextItemWidth(-1.0f);
-                    dirty |= ImGui::InputText("##prompt", lens.prompt, sizeof(lens.prompt));
+                    if (shipped) {
+                        ImGui::TextDisabled("%s", lens.prompt);
+                    } else {
+                        ImGui::SetNextItemWidth(-1.0f);
+                        dirty |= ImGui::InputText("##prompt", lens.prompt, sizeof(lens.prompt));
+                    }
 
                     ImGui::TableNextColumn();
                     ImGui::SetNextItemWidth(-1.0f);
@@ -409,9 +429,15 @@ namespace AgencyEngine::UI
                     // Declared, never inferred from the name above — which is a
                     // label the user is free to edit, and a rename that
                     // silently changed how an impulse resolves would fail as
-                    // wrong behaviour rather than as an error.
+                    // wrong behaviour rather than as an error. For a shipped
+                    // lens it is declared by the prompt file's own text, so it
+                    // is read-only here for the same reason the prompt is.
                     ImGui::TableNextColumn();
-                    dirty |= ImGui::Checkbox("##proposal", &lens.proposal);
+                    if (shipped) {
+                        ImGui::TextDisabled("%s", lens.proposal ? "yes" : "no");
+                    } else {
+                        dirty |= ImGui::Checkbox("##proposal", &lens.proposal);
+                    }
 
                     ImGui::TableNextColumn();
                     ImGui::SetNextItemWidth(-1.0f);
@@ -449,6 +475,23 @@ namespace AgencyEngine::UI
                 ImGui::TextColored(kWarn, "%s",
                                    "Every lens is weighted 0 - there is nothing to ask, so no impulse fires.");
             }
+
+            // Worth a button rather than "delete the config file": the file
+            // holds the rest of the settings too, and someone who has spent an
+            // evening on the weights is exactly who wants them back without
+            // losing their interval and their event filters.
+            if (ImGui::Button("Restore the mod's lens defaults")) {
+                for (int i = 0; i < kMaxLenses; ++i) {
+                    const auto* builtin = BuiltinLensFor(s.lenses[i].id);
+                    if (builtin) {
+                        s.lenses[i].weight = builtin->weight;
+                        s.lenses[i].ledgerSlots = builtin->ledgerSlots;
+                    }
+                }
+                dirty = true;
+            }
+            HelpMarker("Puts every weight and slot count back to what this version of the mod ships.\n"
+                       "Lenses you added yourself are left alone.");
         }
 
         void RenderContextTab(Settings& s, bool& dirty)

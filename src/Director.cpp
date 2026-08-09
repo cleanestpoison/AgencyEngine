@@ -941,8 +941,12 @@ namespace AgencyEngine::Director
             // Drop the previous lens only when something else could be chosen.
             // With one lens configured, repeating is the only option and is not
             // a defect; with two, this alternates strictly, which is the point.
+            //
+            // Held as the prompt file, not the name: two lenses can carry the
+            // same name — a hand-authored one and a shipped one — and matching on
+            // it would knock the wrong row out of the draw.
             if (eligible.size() > 1 && !previous.empty()) {
-                std::erase_if(eligible, [&](const Lens* lens) { return previous == lens->name; });
+                std::erase_if(eligible, [&](const Lens* lens) { return previous == lens->prompt; });
                 totalWeight = 0;
                 for (const auto* lens : eligible) {
                     totalWeight += lens->weight;
@@ -961,7 +965,7 @@ namespace AgencyEngine::Director
                 }
             }
 
-            previous = chosen->name;
+            previous = chosen->prompt;
             return LensChoice{ chosen->name, chosen->prompt, chosen->proposal, chosen->ledgerSlots };
         }
 

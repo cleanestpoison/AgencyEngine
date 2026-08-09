@@ -12,6 +12,20 @@ add_executable(AgencyEngineTests
 
 target_compile_features(AgencyEngineTests PRIVATE cxx_std_23)
 
+# The config, for the same reason: Settings.cpp is plain JSON and plain state,
+# and what it gets wrong is an *upgrade*, which is not reproducible by hand once
+# the old file has been overwritten. Separate executable because each case
+# chdirs into a scratch directory — Settings::FilePath is relative by design.
+add_executable(AgencyEngineSettingsTests
+    SettingsTests.cpp
+    "${CMAKE_SOURCE_DIR}/src/Settings.cpp"
+)
+target_compile_features(AgencyEngineSettingsTests PRIVATE cxx_std_23)
+target_include_directories(AgencyEngineSettingsTests PRIVATE shim "${CMAKE_SOURCE_DIR}/include")
+target_precompile_headers(AgencyEngineSettingsTests PRIVATE TestPCH.h)
+target_link_libraries(AgencyEngineSettingsTests PRIVATE nlohmann_json::nlohmann_json)
+add_test(NAME settings COMMAND AgencyEngineSettingsTests)
+
 # shim/ ahead of include/ so that `#include "Logging.h"` from the ledger finds
 # the stub rather than the spdlog/SKSE one.
 target_include_directories(AgencyEngineTests PRIVATE shim "${CMAKE_SOURCE_DIR}/include")

@@ -1,0 +1,71 @@
+// AgencyEngine.json.example — reference only. This file is never read.
+//
+// AgencyEngine ships NO config file on purpose. With no
+// Data/SKSE/Plugins/AgencyEngine.json present, every setting is the one this
+// version of the mod ships, and a later version that retunes a default reaches
+// you. Shipping a filled-in file would freeze every default at whatever they
+// happened to be on the day you installed, and every update after that would be
+// fighting it.
+//
+// The real file is written for you the first time you press Save on the
+// settings page (SKSE Menu Framework -> AgencyEngine), and it holds ONLY the
+// settings you changed. Anything absent from it stays live and follows the mod.
+// That is why yours will be much shorter than this — this lists every key that
+// exists, with the shipped value, so you can see what there is.
+//
+// Also: JSON has no comments. Copying this file to AgencyEngine.json will fail
+// to parse. Change settings in-game instead.
+{
+  "enabled": true,
+  "intervalGameMinutes": 120.0,
+  "delivery": 1,
+  "generateThought": true,
+  "requireFollower": true,
+  "skipInCombat": true,
+  "forcedImpulseChance": 20,
+
+  "maxEvents": 40,
+  "perFollowerEvents": 10,
+  "eventTypeFilter": "",
+  "followerEventTypeFilter": "npc_thoughts",
+
+  "pendingBioInjection": true,
+  "pendingTtlGameMinutes": 720.0,
+  "pendingResolveGameMinutes": 180.0,
+
+  "ledgerEnabled": true,
+  "ledgerSlots": 6,
+  "ledgerVeto": true,
+
+  "deferOnConversation": true,
+  "quietSeconds": 25.0,
+  "maxDeferSeconds": 60.0,
+  "degradeToPersistentEvent": true,
+  "injectQuietGap": true,
+  "quietPollSeconds": 1.0,
+
+  "combatContinuousMode": false,
+  "continuousExitGraceSeconds": 10.0,
+  "debugLog": false,
+
+  // The lenses themselves are not configuration. Which lenses exist, what each
+  // is called, which prompt file it asks through and whether it produces
+  // proposals all come from the mod, because they describe prompt files that
+  // ship beside the DLL. That is what lets an update add a lens or fix one
+  // without you having to add a row by hand, and without your weights resetting.
+  //
+  // What you can set is the weight (0 switches a lens off, which is also how you
+  // disable one whose prompt needs a mod you don't have) and the ledger slot
+  // count (0 = use the shared count above). Only the ones you moved are written.
+  "lenses": {
+    "aspiration":   { "weight": 35, "ledgerSlots": 0 },
+    "relationship": { "weight": 25, "ledgerSlots": 0 },
+    "activity":     { "weight": 40, "ledgerSlots": 3 }
+  },
+
+  // A lens you wrote yourself has no shipped row behind it, so it is stored
+  // whole. `prompt` resolves to
+  // Data/SKSE/Plugins/SkyrimNet/prompts/<prompt>.prompt, and that file must
+  // {% extends %} agencyengine_impulse_base.prompt. Omitted entirely by default.
+  "customLenses": []
+}

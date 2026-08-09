@@ -102,6 +102,19 @@ foreach ($name in @('base', 'aspiration', 'relationship', 'activity', 'resolved'
     }
 }
 
+# NEVER ship a real AgencyEngine.json. An absent config means every setting is
+# the one this build ships, which is what lets a retuned default reach an install
+# that already exists; a shipped file freezes all of them at install time and
+# every later release is then fighting it. The .example is the documented,
+# never-read copy and must be there instead.
+$config = Join-Path $modFolder 'SKSE\Plugins\AgencyEngine.json'
+if (Test-Path -LiteralPath $config) {
+    throw "$config exists — a shipped config pins every default at install time. Remove it."
+}
+if (-not (Test-Path -LiteralPath "$config.example")) {
+    throw "No AgencyEngine.json.example in $modFolder — the statics deploy didn't run."
+}
+
 Write-Host '==> Mod folder contents:' -ForegroundColor Cyan
 Get-ChildItem -LiteralPath $modFolder -Recurse -File |
     ForEach-Object { '    ' + $_.FullName.Substring($modFolder.Length + 1) }

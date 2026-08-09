@@ -9,6 +9,7 @@
 // headers PCH.h supplies and nothing from CommonLibSSE.
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -28,3 +29,8 @@
 #include <vector>
 
 using namespace std::literals;
+
+// src/Settings.cpp logs but does not include a logging header — inside the
+// plugin `logger::` arrives with the game PCH. shim/ is ahead of include/ on
+// this target's path, so this resolves to the throw-it-away stub.
+#include "Logging.h"

@@ -37,6 +37,18 @@ One focused question the loop can ask, shipped as a prompt file that extends the
 prose blocks only. Selection is weighted and happens in the DLL, never in the template.
 _Avoid_: mode, prompt type, category
 
+**Lens roster**:
+Which lenses exist. It is *content*, shipped in the build alongside the prompt files it names, not
+configuration — a user tunes a lens's **weight** and its ring size and nothing else about it. This is
+what lets a later version add or fix a lens on an install that already has a settings file.
+_Avoid_: lens list, configured lenses
+
+**Lens id**:
+The stable key a config override is stored under (`activity`, `aspiration`). Never displayed and never
+edited, so a lens can be renamed by a release without resetting anyone's weight. Distinct from the
+**ledger ring**, which keys on the lens's *name* because it is per-character saved state.
+_Avoid_: lens key, lens slug
+
 **Aspiration lens**:
 The serious agenda — goals, a quest being walked past, an order of operations she disagrees with,
 what she is trying to accomplish. Explicitly *not* mundane appetites.
@@ -107,7 +119,8 @@ _Avoid_: relationship score, rapport, affinity
 ## Relationships
 
 - A **Lens** produces **Impulses**, each of which is either a **Topic** or a **Proposal**
-- A **Lens** declares which kind it produces; this is *not* inferred from its name, which users can edit
+- A **Lens** declares which kind it produces; this is *not* inferred from its name, which is a label
+- The **Lens roster** comes from the build; the config holds only weight and ring size, by **Lens id**
 - An **Impulse** becomes at most one **Pending impulse**, which is **Carried** and may become **Spoken**
 - **Resolution** decides a **Pending impulse**, and the question it asks depends on Topic vs Proposal
 - A resolved **Pending impulse** confirms a **Ledger** slot; an unresolved one withdraws it
@@ -139,5 +152,10 @@ _Avoid_: relationship score, rapport, affinity
   activities are *social proposals* — the party is the affordance, not the scenery. Destinations may be
   raised as appetite ("is there anything nearby worth clearing out") but never named, because the party
   acts on what the impulse says and recalled world knowledge is not evidence.
-- **"Lens name"** was nearly used as an identity for behavioural branching. Resolved: it is a *label*,
-  user-editable in the UI. Behaviour branches on declared properties of the lens, never on its name.
+- **"Lens name"** was nearly used as an identity for behavioural branching. Resolved: it is a *label*.
+  Behaviour branches on declared properties of the lens, never on its name. A shipped lens's name now
+  comes from the build rather than being typed on the settings page, but the rule stands — a lens
+  someone wrote themselves still carries a name they chose, and a release is still free to rename one.
+- **"Lens" as a config entity** was the original design and is now wrong. Resolved: the **lens roster**
+  is content and the config holds *overrides* against it, keyed by **lens id**. A config that could
+  contradict the build about a lens's prompt file could only ever be wrong about it.
