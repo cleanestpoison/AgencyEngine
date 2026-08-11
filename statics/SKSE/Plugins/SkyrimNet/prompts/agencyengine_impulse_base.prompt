@@ -169,11 +169,14 @@ state. It does not have to have *just* become urgent; it only has to be genuinel
 If nothing on the list is defensible for anybody, do not go looking outside it — take the smallest true thing on the
 list instead. A dull item that is really theirs beats a vivid one that is not.
 
-Three rules survive the forcing, because breaking them makes the impulse worse than silence would have been:
+Four rules survive the forcing, because breaking them makes the impulse worse than silence would have been:
 
 - **Still not a reaction.** The rule about reacting holds — the live conversation *and* the party's current
   undertaking are both still closed. If the subject already on the table is all you can find, go back to the list
   and pick its dullest item instead.
+- **Still not a repeat.** What a companion has already raised stays closed. That closes the subject, not the
+  wording — a candidate that names something on that list in different words is the same subject, and forcing does
+  not reopen it. Take something that is not there, however small.
 - **Still nothing invented.** A forced turn is not permission to give someone a grievance they do not have.
 - **Still this turn's subject.** Forcing removes the silence option, not the focus. Reaching for a kind of thing this
   turn is not asking about is the same failure as inventing one.
@@ -187,8 +190,10 @@ Return `{% raw %}{"speaker": null}{% endraw %}` if any of these is true:
 - Everything you could point at is already on the table — the conversation is doing this subject without you.
 - They raised this, or something close to it, recently. Check their thoughts and the recent events.
 - **It is listed under "has already raised" for that companion.** That list is not a hint, it is a closed door: those
-  subjects have been said, and saying them again is the single thing this turn must not produce. Pick something else
-  or stay silent. A subject leaves that list on its own once enough has happened; it is not your job to revive it.
+  subjects have been said, and saying them again is the single thing this turn must not produce. Check your candidate
+  against that list as a subject, not as a string — a subject that appears there **in different words** is the same
+  subject, and rewording it does not open the door. Pick something else or stay silent. A subject leaves that list on
+  its own once enough has happened; it is not your job to revive it.
 - The moment is wrong: mid-fight, mid-negotiation, mid-crisis, someone bleeding out. Interrupting a scene with an unrelated demand is not agency, it is noise.
 - The only thing you can find belongs to a different kind of turn than this one. Silence is the right answer to a
   question this turn is not asking; another turn will ask it.
@@ -212,16 +217,16 @@ Sharp and warm both appear below. Neither register is the model to copy — the 
 companion is in.
 
 {% block lens_examples %}
-{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "narration": "Four days of walking toward the Greybeards and not toward the moth priest, and Harkon reads his scroll a little sooner on each of them. She opens by asking them what the order of this is meant to be."}{% endraw %}
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "narration": "Lydia has not slept indoors in eleven days and has stopped pretending she does not mind. She starts by asking whether they are stopping in town tonight."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "the moth priest", "narration": "Four days of walking toward the Greybeards and not toward the moth priest, and Harkon reads his scroll a little sooner on each of them. She opens by asking them what the order of this is meant to be."}{% endraw %}
+{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a bed", "narration": "Lydia has not slept indoors in eleven days and has stopped pretending she does not mind. She starts by asking whether they are stopping in town tonight."}{% endraw %}
 {% endblock %}
 
 Bad, in every register:
-{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "narration": "Serana keeps half a step closer than the road needs, watching the treeline."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "the treeline", "narration": "Serana keeps half a step closer than the road needs, watching the treeline."}{% endraw %}
                           (a mood, not a topic — nothing for her to say)
-{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "narration": "Serana is done deflecting the word they used on the road, and means to tell them exactly what they are and are not allowed to mean by it."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "the word they used", "narration": "Serana is done deflecting the word they used on the road, and means to tell them exactly what they are and are not allowed to mean by it."}{% endraw %}
                           (right subject, finished — she has reached a verdict and can only deliver it. Give her the subject and the first thing she would say about it, not the end of the argument)
-{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "narration": "Serana turns to them. \"We're going home,\" she says."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "going home", "narration": "Serana turns to them. \"We're going home,\" she says."}{% endraw %}
                           (writes her line for her — supply the agenda, not the words)
 {% raw %}>{"speaker": "Dragonborn", ...}{% endraw %}                 (the player is never the speaker)
 
@@ -331,8 +336,8 @@ No recorded thoughts for them.
 {% if follower.already_raised %}
 ### What {{ follower.name }} has already raised
 Said out loud, by them, unprompted. These subjects are spent — not because they went well, but because they have
-been had. Returning to one is repeating themselves, which is the one thing that makes this read as a script rather
-than a person.
+been had. Returning to one — in these words or in new ones — is repeating themselves, which is the one thing that
+makes this read as a script rather than a person.
 {% for raised in follower.already_raised %}
 - {{ raised }}
 {% endfor %}
@@ -372,9 +377,9 @@ last few minutes?
 {% endblock %}
 
 {% if forced %}
-Return the JSON object with speaker, target and narration. There is no silence option this turn.
+Return the JSON object with speaker, target, topic and narration. There is no silence option this turn.
 {% else %}
-If yes, return the JSON object with speaker, target and narration. If no — and that is the usual answer — return
+If yes, return the JSON object with speaker, target, topic and narration. If no — and that is the usual answer — return
 {% raw %}{"speaker": null}{% endraw %}.
 {% endif %}
 

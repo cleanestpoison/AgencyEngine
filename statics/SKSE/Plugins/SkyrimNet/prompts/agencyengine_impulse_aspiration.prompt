@@ -50,14 +50,14 @@ anyone here has, this turn's answer is silence.
 {% endblock %}
 
 {% block lens_examples %}
-{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "narration": "Four days of walking toward the Greybeards and not toward the moth priest, and Harkon reads his scroll a little sooner on each of them. She opens by asking them what the order of this is meant to be."}{% endraw %}
-{% raw %}>{"speaker": "Kaidan", "target": "Dragonborn", "narration": "Kaidan has been carrying his father's sword unrepaired since Ivarstead and there has been a forge in every town since. He wants to know when they are stopping long enough for him to see to it."}{% endraw %}
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "narration": "Lydia was told to hold Whiterun's business in mind and it has been a fortnight of walking away from it. She asks what is supposed to be happening about it, and when."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "the moth priest", "narration": "Four days of walking toward the Greybeards and not toward the moth priest, and Harkon reads his scroll a little sooner on each of them. She opens by asking them what the order of this is meant to be."}{% endraw %}
+{% raw %}>{"speaker": "Kaidan", "target": "Dragonborn", "topic": "his father's sword", "narration": "Kaidan has been carrying his father's sword unrepaired since Ivarstead and there has been a forge in every town since. He wants to know when they are stopping long enough for him to see to it."}{% endraw %}
+{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "Whiterun's business", "narration": "Lydia was told to hold Whiterun's business in mind and it has been a fortnight of walking away from it. She asks what is supposed to be happening about it, and when."}{% endraw %}
 
 Wrong turn for this lens, however good it is:
-{% raw %}>{"speaker": "Serana", "target": "Kaidan", "narration": "Kaidan has taken the front three times running and Serana has decided he is doing it to be seen doing it. She opens by asking him who he thinks is watching."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Kaidan", "topic": "his grandstanding", "narration": "Kaidan has taken the front three times running and Serana has decided he is doing it to be seen doing it. She opens by asking him who he thinks is watching."}{% endraw %}
                           (real, but it is standing between two people — that is the relationship turn, not this one)
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "narration": "Lydia has not slept indoors in eleven days and has stopped pretending she does not mind. She starts by asking whether they are stopping in town tonight."}{% endraw %}
+{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a bed", "narration": "Lydia has not slept indoors in eleven days and has stopped pretending she does not mind. She starts by asking whether they are stopping in town tonight."}{% endraw %}
                           (a real want, and a good line — but it is an appetite, which is the activity turn, not this one)
 {% endblock %}
 
