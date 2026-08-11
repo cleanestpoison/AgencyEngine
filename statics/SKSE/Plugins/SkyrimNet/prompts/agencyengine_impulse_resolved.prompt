@@ -3,25 +3,26 @@
 
    Is the subject a companion is carrying still live, or is it done?
 
-   Two cases, and they are not the same question. When spoken is false she has
-   never said it, so "done" means the talk covered it without her. When spoken
-   is true the loop already gave her the turn — her raise is the premise, not
-   evidence, and "done" means somebody engaged with what she said. Counting her
-   own raise as resolution would mark every beat done the moment she opens her
-   mouth, which hides the one thing the mod is meant to notice.
+   Two cases, and they are not the same question. When spoken is false they
+   have never said it, so "done" means the talk covered it without them. When
+   spoken is true the loop already gave them the turn — their raise is the
+   premise, not evidence, and "done" means somebody engaged with what they
+   said. Counting their own raise as resolution would mark every beat done the
+   moment they open their mouth, which hides the one thing the mod is meant to
+   notice.
 
    `proposal` splits the spoken case again. A *topic* is met by an answer of any
    kind — agreeing, refusing, arguing it out. A *proposal* ("come drink", "spar
    with me") is not: agreement alone means nothing has happened yet, and the
    deferral rule below already covers it. Without this branch the mod buries the
    impulse at the exact moment the player says yes, which is the one case that
-   should keep her carrying it.
+   should keep them carrying it.
 
    `proposal` is declared on the lens's row on the Settings page and rides the
    pending entry here. It is NOT inferred from the lens's name, which the user
    can edit. See docs/adr/0001.
 
-   true clears her bio entry and suppresses the subject for that lens's ring;
+   true clears their bio entry and suppresses the subject for that lens's ring;
    false leaves it live and a TTL releases it later. false is the recoverable
    answer.
 
@@ -39,10 +40,10 @@
 # Task
 
 {% if spoken and proposal %}
-{{ npc_name }} asked {{ target_name }} for this at {{ marked_at }}. That she asked is given, and so is any answer
-she got. Judge whether the thing she asked for actually happened, or was plainly refused.
+{{ npc_name }} asked {{ target_name }} for this at {{ marked_at }}. That they asked is given, and so is any answer
+they got. Judge whether the thing they asked for actually happened, or was plainly refused.
 {% else if spoken %}
-{{ npc_name }} raised this with {{ target_name }} at {{ marked_at }}. That she said it is given. Judge whether
+{{ npc_name }} raised this with {{ target_name }} at {{ marked_at }}. That they said it is given. Judge whether
 anyone met it.
 {% else if proposal %}
 {{ npc_name }} has been meaning to ask {{ target_name }} for this and has not asked. Judge whether it happened
@@ -65,17 +66,17 @@ It is now {{ game_time }}. Answer from the events below and nothing else.
 # Decide
 
 {% if spoken and proposal %}
-She asked for something to be *done*, so an answer is not the point — the doing is.
+{{ npc_name }} asked for something to be *done*, so an answer is not the point — the doing is.
 
 **resolved: true** when the events show it happened, when someone plainly refused, or when it stopped being
 possible.
 
 **resolved: false** when all that happened was agreement. "Yes", "sure", "later", "after this" — if nothing in the
-events shows it then took place, it is still owed her. Deferral is not an answer, and agreeing to something and
-never doing it is a deferral.
+events shows it then took place, it is still owed. Deferral is not an answer, and agreeing to something and never
+doing it is a deferral.
 {% else if spoken %}
 **resolved: true** when someone met it — answered it, agreed, refused, argued it out, or events made it moot.
-A refusal counts: she does not have to have got what she wanted, only an answer.
+A refusal counts: {{ npc_name }} does not have to have got what they wanted, only an answer.
 
 **resolved: false** when it went past — changed subject, walked off, silence, or a deferral like "sure" or "later".
 Deferral is not an answer.
@@ -85,7 +86,7 @@ them doing it — or when it stopped being possible.
 
 **resolved: false** when nothing in the events shows it taking place, including when something adjacent to it did.
 {% else %}
-**resolved: true** when it reached the table without her — someone else raised it, or events settled it, so raising
+**resolved: true** when it reached the table without them — someone else raised it, or events settled it, so raising
 it now would repeat what already happened.
 
 **resolved: false** when nothing touched it, when only an adjacent subject came up, or when it was mentioned and
@@ -94,7 +95,7 @@ dropped without being addressed.
 
 Also false when you cannot tell. false is recoverable; true buries the subject.
 
-Do not judge whether the subject is worth raising or whether she is right. Only whether it has been met.
+Do not judge whether the subject is worth raising or whether {{ npc_name }} is right. Only whether it has been met.
 
 # Output
 
