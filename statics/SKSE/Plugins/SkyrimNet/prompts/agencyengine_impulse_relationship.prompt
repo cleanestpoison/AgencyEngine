@@ -60,17 +60,18 @@ as the weakest item on this list, never the strongest.
 {% endblock %}
 
 {% block lens_examples %}
-{% raw %}>{"speaker": "Serana", "target": "Kaidan", "topic": "his grandstanding", "narration": "Kaidan has taken the front three times running without being asked, and Serana has decided he is doing it to be seen doing it. She opens by asking him who he thinks is watching."}{% endraw %}
-{% raw %}>{"speaker": "Kaidan", "target": "Lydia", "topic": "why he trusts her", "narration": "Kaidan has been letting Lydia hold the front for a week and has never told her why he trusts her there. He would rather she heard it from him than worked it out alone, and he starts with the smallest true part of it."}{% endraw %}
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "the given-away rewards", "narration": "Lydia has watched them hand away the last three rewards without being asked and has stopped reading it as carelessness. She wants them to know she noticed, and she is not sure yet whether she is saying it as praise."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Kaidan", "topic": "his grandstanding", "why_now": "today's stamped event: Kaidan took the front a third time, unasked", "narration": "Kaidan has taken the front three times running without being asked, and Serana has decided he is doing it to be seen doing it. She opens by asking him who he thinks is watching."}{% endraw %}
+{% raw %}>{"speaker": "Kaidan", "target": "Lydia", "topic": "why he trusts her", "why_now": "his stamped thought on last night's watch that she has never heard it from him", "narration": "Kaidan has been letting Lydia hold the front for a week and has never told her why he trusts her there. He would rather she heard it from him than worked it out alone, and he starts with the smallest true part of it."}{% endraw %}
+{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "the given-away rewards", "why_now": "the stamped event of the third reward handed away, this afternoon", "narration": "Lydia has watched them hand away the last three rewards without being asked and has stopped reading it as carelessness. She wants them to know she noticed, and she is not sure yet whether she is saying it as praise."}{% endraw %}
 
 Wrong turn for this lens, however good it is:
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a bed", "narration": "Lydia has not slept indoors in eleven days and has stopped pretending she does not mind. She wants a bed tonight."}{% endraw %}
+{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a bed", "why_now": "her stamped thought two nights ago about the cold ground", "narration": "Lydia has not slept indoors in eleven days and has stopped pretending she does not mind. She wants a bed tonight."}{% endraw %}
                           (real, but it is a want with an object — that is the aspiration turn, not this one)
 
 Right subject, no timing — the weakest thing you could return:
-{% raw %}>{"speaker": "Serana", "target": "Kaidan", "topic": "trusting Kaidan", "narration": "Serana has never entirely trusted Kaidan."}{% endraw %}
-                          (that is her standing with him, which is always true; nothing here says why she raises it today)
+{% raw %}>{"speaker": "Serana", "target": "Kaidan", "topic": "trusting Kaidan", "why_now": "she has never entirely trusted him", "narration": "Serana has never entirely trusted Kaidan."}{% endraw %}
+                          (that is her standing with him, which is always true; a why_now that restates the standing
+                          cites nothing — it has to name a stamped thought or event)
 {% endblock %}
 
 {% block lens_focus %}

@@ -126,6 +126,11 @@ namespace AgencyEngine::Director
             // match twice, and the prompt has to be able to say "already raised:
             // the coin split" in a line rather than a paragraph.
             std::string topic;
+            // The stamped thought or event the model claims this rides on.
+            // Observability only — logged with the delivered impulse so the log
+            // can tell a cited impulse from a confabulated one. Nothing branches
+            // on it, and an older prompt that doesn't return it leaves it empty.
+            std::string whyNow;
         };
 
         // A decision with its participants resolved, on its way to SkyrimNet.
@@ -133,6 +138,7 @@ namespace AgencyEngine::Director
         {
             std::string   content;
             std::string   topic;
+            std::string   whyNow;   // carried for the delivery log only
             std::string   speakerName;
             std::string   targetName;
             std::uint64_t speakerUuid = 0;
@@ -560,6 +566,15 @@ namespace AgencyEngine::Director
             if (ok) {
                 logger::info("{} raises something with {} — delivered as a {} at game time {}: {}", d.speakerName,
                              d.targetName, how, FormatGameTime(d.gameDays), d.content);
+                // The impulse's own citation, straight from the model. An empty
+                // one is not an error — an older prompt file simply doesn't ask
+                // for it — but it is worth a line, because a prompt that should
+                // be returning citations and isn't is being skimmed.
+                if (d.whyNow.empty()) {
+                    logger::info("No why_now came back with it — the model did not cite what this rides on");
+                } else {
+                    logger::info("Why now: {}", OneLine(d.whyNow));
+                }
             } else {
                 logger::error("Impulse FAILED to reach SkyrimNet (attempted as a {}, {} -> {}) at game time {}. The "
                               "text was: {}",
@@ -706,7 +721,8 @@ namespace AgencyEngine::Director
             return {};
         }
 
-        // The prompt asks for {"speaker", "target", "narration"}, or
+        // The prompt asks for {"speaker", "target", "topic", "why_now",
+        // "narration"}, or
         // {"speaker": null} for the ordinary case where nobody has anything to
         // raise. Everything here is written so that a model which drifts off
         // that format still produces *something* rather than costing the call.
@@ -732,6 +748,7 @@ namespace AgencyEngine::Director
                         decision.speaker = FirstString(parsed, { "speaker", "companion", "follower" });
                         decision.target = FirstString(parsed, { "target", "audience", "listener" });
                         decision.topic = FirstString(parsed, { "topic", "subject", "about" });
+                        decision.whyNow = FirstString(parsed, { "why_now", "whyNow", "why", "evidence" });
                         // A null/absent speaker is how silence is spelled, but
                         // the narration is what we'd actually deliver — so an
                         // empty one means silence regardless of what else came
@@ -1150,6 +1167,7 @@ namespace AgencyEngine::Director
                     ImpulseDelivery outgoing;
                     outgoing.content = std::move(decision.narration);
                     outgoing.topic = std::move(decision.topic);
+                    outgoing.whyNow = std::move(decision.whyNow);
                     outgoing.speakerName = speaker->name;
                     outgoing.targetName = target->name;
                     outgoing.speakerUuid = speaker->uuid;

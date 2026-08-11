@@ -109,12 +109,15 @@ want; end on the thing they open their mouth about.
 # Output format
 Return **only** a JSON object — no prose, no markdown, no fence. The only shape:
 ```
-{% raw %}{"speaker": "<companion name>", "target": "<who they turn to>", "topic": "<the subject, 2-5 words>", "narration": "<2-4 sentences, 80 words max>"}{% endraw %}
+{% raw %}{"speaker": "<companion name>", "target": "<who they turn to>", "topic": "<the subject, 2-5 words>", "why_now": "<the stamped thought or event this rides on>", "narration": "<2-4 sentences, 80 words max>"}{% endraw %}
 ```
 The word limit is part of the contract. Count before you return.
 
 `topic` is the subject as the two of them would name it later — "the coin split", "her father". Not a sentence,
 not a summary — the same subject always produces the same few words.
+
+`why_now` names the one stamped thought or event in the state that makes the subject surface today — the item
+itself, not a paraphrase of the mood. An impulse that cannot fill this field is not citable and is not the impulse.
 {% if not forced %}
 When nobody has anything:
 ```
@@ -174,16 +177,16 @@ volume.** A pitch the room has not earned reads as a cutscene.
 Sharp and warm both appear below — the state, not the example, decides a companion's register.
 
 {% block lens_examples %}
-{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "the moth priest", "narration": "Four days of walking toward the Greybeards and not toward the moth priest, and Harkon reads his scroll a little sooner on each of them. She opens by asking them what the order of this is meant to be."}{% endraw %}
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a bed", "narration": "Lydia has not slept indoors in eleven days and has stopped pretending she does not mind. She starts by asking whether they are stopping in town tonight."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "the moth priest", "why_now": "the events show a fourth straight day of travel toward the Greybeards, away from the moth priest", "narration": "Four days of walking toward the Greybeards and not toward the moth priest, and Harkon reads his scroll a little sooner on each of them. She opens by asking them what the order of this is meant to be."}{% endraw %}
+{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a bed", "why_now": "her stamped thought two nights ago about the cold ground, and nothing said since", "narration": "Lydia has not slept indoors in eleven days and has stopped pretending she does not mind. She starts by asking whether they are stopping in town tonight."}{% endraw %}
 {% endblock %}
 
 Bad, in every register:
-{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "the treeline", "narration": "Serana keeps half a step closer than the road needs, watching the treeline."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "the treeline", "why_now": "her thought at dusk about the treeline", "narration": "Serana keeps half a step closer than the road needs, watching the treeline."}{% endraw %}
                           (a mood, not a topic — nothing for her to say)
-{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "the word they used", "narration": "Serana is done deflecting the word they used on the road, and means to tell them exactly what they may mean by it."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "the word they used", "why_now": "the stamped exchange on the road where they used the word", "narration": "Serana is done deflecting the word they used on the road, and means to tell them exactly what they may mean by it."}{% endraw %}
                           (finished — give her the subject, not the verdict she has reached)
-{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "going home", "narration": "Serana turns to them. \"We're going home,\" she says."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "going home", "why_now": "her thought yesterday about going home", "narration": "Serana turns to them. \"We're going home,\" she says."}{% endraw %}
                           (writes her line for her — supply the agenda, not the words)
 {% raw %}>{"speaker": "Dragonborn", ...}{% endraw %}                 (the player is never the speaker)
 
@@ -327,7 +330,8 @@ Check your impulse against three doors. One that fails any of them is not the im
 1. **Not the current undertaking.** Not the errand underway, the destination being walked toward, or the fight in
    progress — and not what the last few exchanges are about.
 2. **Not already raised.** Not on the speaker's "has already raised" list — in those words or any others.
-3. **Citable.** The why-now points at a stamped thought or event above.
+3. **Citable.** The `why_now` you return names a stamped thought or event that is actually above — not
+   remembered, not inferred.
 [ end system ]
 
 [ user ]
@@ -337,10 +341,10 @@ last few minutes?
 {% endblock %}
 
 {% if forced %}
-Return the JSON object with speaker, target, topic and narration. There is no silence option this turn.
+Return the JSON object with speaker, target, topic, why_now and narration. There is no silence option this turn.
 {% else %}
-If yes, return the JSON object with speaker, target, topic and narration. If no — and that is the usual answer — return
-{% raw %}{"speaker": null}{% endraw %}.
+If yes, return the JSON object with speaker, target, topic, why_now and narration. If no — and that is the usual
+answer — return {% raw %}{"speaker": null}{% endraw %}.
 {% endif %}
 
 JSON only. Nothing else in your reply.

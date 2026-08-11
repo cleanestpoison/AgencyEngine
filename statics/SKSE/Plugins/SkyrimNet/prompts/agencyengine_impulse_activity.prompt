@@ -68,20 +68,20 @@ evening. The other person's answer is not yours to write, and neither is what ha
 {% endblock %}
 
 {% block lens_examples %}
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a drink", "narration": "Three towns since anyone sat down for an hour and Lydia has been counting them. She asks whether they are stopping long enough tonight for a drink, and makes it easy to say no to."}{% endraw %}
-{% raw %}>{"speaker": "Kaidan", "target": "Serana", "topic": "sparring", "narration": "Kaidan has watched Serana fight for a week and has been wondering how he would do against her. There is light left, and he asks her for a round before it goes."}{% endraw %}
-{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "something to fight", "narration": "Four days of walking and nothing has come at them since the pass, and Serana has been getting worse company for it. She asks whether there is anything nearby worth going out of their way to kill."}{% endraw %}
+{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a drink", "why_now": "the events pass a third town today without anyone sitting down", "narration": "Three towns since anyone sat down for an hour and Lydia has been counting them. She asks whether they are stopping long enough tonight for a drink, and makes it easy to say no to."}{% endraw %}
+{% raw %}>{"speaker": "Kaidan", "target": "Serana", "topic": "sparring", "why_now": "his stamped thought after this morning's fight, watching how she moves", "narration": "Kaidan has watched Serana fight for a week and has been wondering how he would do against her. There is light left, and he asks her for a round before it goes."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "something to fight", "why_now": "no combat in the stamped events since the pass, four days back", "narration": "Four days of walking and nothing has come at them since the pass, and Serana has been getting worse company for it. She asks whether there is anything nearby worth going out of their way to kill."}{% endraw %}
 
 Wrong turn for this lens, however good it is:
-{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "the moth priest", "narration": "Four days of walking toward the Greybeards and not toward the moth priest, and Harkon reads his scroll a little sooner on each of them. She opens by asking them what the order of this is meant to be."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "the moth priest", "why_now": "the events show a fourth straight day of travel toward the Greybeards, away from the moth priest", "narration": "Four days of walking toward the Greybeards and not toward the moth priest, and Harkon reads his scroll a little sooner on each of them. She opens by asking them what the order of this is meant to be."}{% endraw %}
                           (real, but it is an agenda being walked past — that is the aspiration turn, not this one)
-{% raw %}>{"speaker": "Serana", "target": "Kaidan", "topic": "his grandstanding", "narration": "Kaidan has taken the front three times running and Serana has decided he is doing it to be seen doing it. She opens by asking him who he thinks is watching."}{% endraw %}
+{% raw %}>{"speaker": "Serana", "target": "Kaidan", "topic": "his grandstanding", "why_now": "today's stamped event: Kaidan took the front a third time, unasked", "narration": "Kaidan has taken the front three times running and Serana has decided he is doing it to be seen doing it. She opens by asking him who he thinks is watching."}{% endraw %}
                           (standing between two people — that is the relationship turn)
 
 Wrong in this lens's own register:
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a drink", "narration": "Lydia suggests they stop at the Bannered Mare in Whiterun tonight, two hours down the road, and drink until the place closes."}{% endraw %}
+{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a drink", "why_now": "the events pass a third town today without anyone sitting down", "narration": "Lydia suggests they stop at the Bannered Mare in Whiterun tonight, two hours down the road, and drink until the place closes."}{% endraw %}
                           (names a place and a route — she asks for the drink, never for where. The party acts on what you write)
-{% raw %}>{"speaker": "Kaidan", "target": "Serana", "topic": "sparring", "narration": "Kaidan proposes they spar at first light, best of three falls, and that the loser carries the packs."}{% endraw %}
+{% raw %}>{"speaker": "Kaidan", "target": "Serana", "topic": "sparring", "why_now": "his stamped thought after this morning's fight, watching how she moves", "narration": "Kaidan proposes they spar at first light, best of three falls, and that the loser carries the packs."}{% endraw %}
                           (an arrangement, not an opening — he is scheduling an event she has not agreed to)
 {% endblock %}
 
