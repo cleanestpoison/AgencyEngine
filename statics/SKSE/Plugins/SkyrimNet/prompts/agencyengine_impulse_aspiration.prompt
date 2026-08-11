@@ -30,7 +30,9 @@ keeps not getting to it, and they have waited long enough to say so out loud.
 
 {% block lens_when_to_speak %}
 - **An aspiration nobody has touched.** Something on their own list of what they are trying to do that the party has
-  been walking past for days. This is the best case and usually the one that is available.
+  been walking past for days. This is the best case and usually the one that is available. It stops being available
+  the moment the party turns toward it — an agenda the party is serving right now is not being ignored. Untouched
+  means *walked away from*, never *underway*.
 - **An order of operations they disagree with.** Not that the plan is wrong, but that *this* is being done before
   *that*, and the delay is costing something they care about.
 - **A course of action they think the party should take.** They have worked out what ought to happen next and have
