@@ -352,7 +352,6 @@ namespace AgencyEngine::PendingImpulses
         // lock.
         std::uint32_t supersededFormID = 0;
         std::string   supersededTopic;
-        bool          supersededWasSpoken = false;
 
         {
             std::scoped_lock lock{ g_lock };
@@ -367,7 +366,6 @@ namespace AgencyEngine::PendingImpulses
                              entry.lens.empty() ? "unnamed" : entry.lens, OneLine(existing->text));
                 supersededFormID = existing->formID;
                 supersededTopic = existing->topic;
-                supersededWasSpoken = existing->spoken;
                 std::erase_if(g_entries, [&](const Entry& e) {
                     return e.formID == entry.formID && e.lens == entry.lens;
                 });
@@ -378,13 +376,22 @@ namespace AgencyEngine::PendingImpulses
             g_dirty = true;
         }
 
-        // A superseded *spoken* entry leaves a provisional slot behind with
-        // nothing left to decide it — Set replaces the entry in place and never
-        // goes through Clear, so without this the slot sits provisional for the
-        // rest of the session, suppressing its subject with no route to release.
-        // Withdraw is the honest verdict: we never learned whether anyone met it,
-        // and unanswered subjects are the ones allowed back.
-        if (supersededWasSpoken && !supersededTopic.empty()) {
+        // A superseded entry leaves a provisional slot behind with nothing left
+        // to decide it — Set replaces the entry and never goes through Clear, so
+        // without this the slot sits provisional for the rest of the session,
+        // suppressing its subject with no route to release. Withdraw is the
+        // honest verdict: we never learned whether anyone met it, and unanswered
+        // subjects are the ones allowed back.
+        //
+        // Not conditional on the entry having been spoken any more. A slot is
+        // written the moment a subject is *carried* now, because a cue grants a
+        // turn without naming which subject she took up — so a carried entry
+        // owns one too, and it is the common case rather than the rare one.
+        //
+        // The caller records the new entry's slot *after* this returns, and that
+        // order is load-bearing: a lens re-raising the same subject would
+        // otherwise refresh the slot and then have this erase the refreshed one.
+        if (!supersededTopic.empty()) {
             LedgerDecide(supersededFormID, supersededTopic, Disposition::Withdraw);
         }
     }
@@ -435,10 +442,12 @@ namespace AgencyEngine::PendingImpulses
                 // Clear has no route to Settings to look it up itself.
                 LedgerRecord(formID, removed.speakerName, removed.topic, removed.lens, 0);
                 LedgerDecide(formID, removed.topic, Disposition::Confirm);
-            } else if (removed.spoken) {
-                // Withdraw only ever releases a slot that exists. An entry that
-                // was never spoken never had one, and nothing was answered, so
-                // there is nothing to release and nothing to suppress.
+            } else {
+                // Every other way an entry dies — the TTL, the UI, a load-order
+                // mismatch — means nobody ever answered it, so the slot it has
+                // been holding since it was carried goes back. Withdraw only
+                // ever releases a slot that exists, so this is free for an entry
+                // that never took one.
                 LedgerDecide(formID, removed.topic, Disposition::Withdraw);
             }
         }

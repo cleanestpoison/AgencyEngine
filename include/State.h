@@ -69,11 +69,16 @@ namespace AgencyEngine
         // No ask before this game time. Stamped at dispatch as ask + interval,
         // and pushed out to ask + interval + cooldown if the ask carried.
         double dueGameDays = 0.0;
-        // When the clock was last armed or asked. Only used to notice game time
-        // running backwards, which means an older save was loaded.
+        // When the clock was last armed or asked. Used to notice game time
+        // running backwards — which means an older save was loaded — and to
+        // recompute the deadline when the cadence is moved on the settings page.
         double armedGameDays = 0.0;
         bool   asked = false;      // false = armed, never asked this session
         bool   inFlight = false;   // an ask is outstanding
+        // Whether the last ask carried, and so whether the deadline above
+        // includes the cooldown. Kept because the settings page can move either
+        // number while the clock is running.
+        bool   carried = false;
     };
 
     // One sample of "is anyone talking right now", from AgencyEngine_Bridge's

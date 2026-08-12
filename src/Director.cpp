@@ -973,7 +973,7 @@ namespace AgencyEngine::Director
                     if (it == state.lensClocks.end()) {
                         state.lensClocks.push_back(LensClock{
                             lens.key, lens.name, nowGameDays + GameMinutesToDays(lens.intervalGameMinutes),
-                            nowGameDays, false, false });
+                            nowGameDays, false, false, false });
                         logger::info("The {} lens is armed at game time {} — first ask in {:.0f} in-game minutes",
                                      lens.name.empty() ? "unnamed" : lens.name, FormatGameTime(nowGameDays),
                                      lens.intervalGameMinutes);
@@ -994,6 +994,20 @@ namespace AgencyEngine::Director
 
                     // The name is a label and can be edited under a stable id.
                     it->name = lens.name;
+
+                    // Shortening a lens's cadence on the settings page has to
+                    // move the countdown that is already running, or the page
+                    // says "changes apply immediately" while the Next ask column
+                    // sits there for another six in-game hours. Only ever
+                    // *shortened*: lengthening one lets the current countdown
+                    // finish and applies from the next ask, which is the
+                    // conservative direction — nobody is surprised by an ask
+                    // arriving on the old schedule.
+                    const auto deadline = it->armedGameDays +
+                                          GameMinutesToDays(lens.intervalGameMinutes +
+                                                            (it->carried ? lens.cooldownGameMinutes : 0.0f));
+                    it->dueGameDays = std::min(it->dueGameDays, deadline);
+
                     if (it->inFlight || nowGameDays < it->dueGameDays) {
                         continue;
                     }
@@ -1075,6 +1089,10 @@ namespace AgencyEngine::Director
                     clock.inFlight = true;
                     clock.asked = true;
                     clock.armedGameDays = nowGameDays;
+                    // Not carried until the answer says so, so the deadline is
+                    // one interval and the settings page can shorten it to one
+                    // interval while the call is still out.
+                    clock.carried = false;
                     clock.dueGameDays = nowGameDays + GameMinutesToDays(lens.intervalGameMinutes);
                 }
                 state.inFlight = true;
@@ -1098,6 +1116,7 @@ namespace AgencyEngine::Director
                         continue;
                     }
                     clock.inFlight = false;
+                    clock.carried = carried;
                     if (carried) {
                         clock.dueGameDays =
                             askedAtGameDays + GameMinutesToDays(intervalGameMinutes + cooldownGameMinutes);
@@ -1155,7 +1174,7 @@ namespace AgencyEngine::Director
             const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(
                 lens.prompt, kLLMVariant, contextJson,
                 // Runs on a SkyrimNet worker thread. Nothing here touches the
-                // game — the delivery hop is posted to the main thread.
+                // game — the carry hop is posted to the main thread.
                 [gameDays, dispatchedAt, player = std::move(player), roster = std::move(roster),
                  generateThought = settings.generateThought, lensKey = lens.key, lensName = lens.name,
                  proposal = lens.proposal, lensLedgerSlots = lens.ledgerSlots,

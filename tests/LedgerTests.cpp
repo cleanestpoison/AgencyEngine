@@ -353,6 +353,39 @@ namespace
         CHECK(Ledger::State(kSerana) == "carried");
     }
 
+    // A slot is written the moment a subject is carried, so an entry that dies
+    // without ever being answered has to hand its slot back. The failure this
+    // guards against is silent and long-lived: the subject goes on being
+    // suppressed with nothing left that could ever release it, and she simply
+    // stops raising something she never got to raise.
+    void AnUnansweredCarryReleasesItsSlot()
+    {
+        Begin("a carried subject that is superseded or forgotten releases its slot");
+
+        // What Director::CarryImpulse does, in order: the entry, then its
+        // provisional slot.
+        Ledger::Set(Carried(kSerana, "Serana", kAspiration, "her father", "One."));
+        Ledger::LedgerRecord(kSerana, "Serana", "her father", kAspiration, 6);
+        CHECK(Ledger::LedgerSuppresses(kSerana, "her father", kAspiration));
+
+        // The same lens comes back with a different subject. Nobody ever
+        // answered the first, so it goes back into circulation.
+        Ledger::Set(Carried(kSerana, "Serana", kAspiration, "the moth priest", "Two."));
+        Ledger::LedgerRecord(kSerana, "Serana", "the moth priest", kAspiration, 6);
+        CHECK(!Ledger::LedgerSuppresses(kSerana, "her father", kAspiration));
+        CHECK(Ledger::LedgerSuppresses(kSerana, "the moth priest", kAspiration));
+
+        // And the TTL is the same verdict by another route.
+        Ledger::Clear(kSerana, kAspiration, "ttl");
+        CHECK(!Ledger::LedgerSuppresses(kSerana, "the moth priest", kAspiration));
+
+        // Only an explicit resolved verdict keeps one.
+        Ledger::Set(Carried(kSerana, "Serana", kActivity, "a drink", "Three."));
+        Ledger::LedgerRecord(kSerana, "Serana", "a drink", kActivity, 3);
+        Ledger::Clear(kSerana, kActivity, "resolved", Disposition::Confirm);
+        CHECK(Ledger::LedgerSuppresses(kSerana, "a drink", kActivity));
+    }
+
     // Clearing by actor is for the two callers that mean the actor rather than
     // one of her subjects — the load-order check and the UI's Forget button.
     void ClearAllTakesEverythingSheIsCarrying()
@@ -389,6 +422,7 @@ int main()
     ASecondFromTheSameLensSupersedes();
     ImpulsesResolveIndependently();
     SaidAndUnsaidRenderSeparately();
+    AnUnansweredCarryReleasesItsSlot();
     ClearAllTakesEverythingSheIsCarrying();
 
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
