@@ -116,10 +116,11 @@ namespace AgencyEngine
                         // just an empty string in one of them.
                         SkyrimNetAPI::RegisterDecorator(
                             PendingImpulses::kDecoratorName,
-                            "AgencyEngine: the impulse this companion has been meaning to raise and has not said "
-                            "out loud yet, or an empty string when there is none.",
+                            "AgencyEngine: everything this companion has been meaning to raise and has not said out "
+                            "loud yet, newest first, one per line as a markdown list item — or an empty string when "
+                            "there is nothing.",
                             // SkyrimNet's thread, mid-render. Reads a FormID and
-                            // copies one string — no other RE:: calls, nothing
+                            // builds one string — no other RE:: calls, nothing
                             // that can block on the main thread.
                             [](RE::Actor* actor) -> std::string {
                                 if (!actor) {
@@ -128,18 +129,38 @@ namespace AgencyEngine
                                 return PendingImpulses::Get(actor->GetFormID());
                             });
 
-                        // Same block, two wordings. A subject she has not said
-                        // and one she has said and got nothing back on are
-                        // different states, and telling her the second is the
-                        // first — "you have not said it out loud" about a thing
-                        // she just said — would have her raise it again on the
-                        // next line. Registered alongside the text decorator
-                        // because the bio prompt names both, and an
-                        // unregistered name is a parse error for the whole file.
+                        // Same block, two wordings, and a companion can need
+                        // both at once — one lens's subject unsaid while
+                        // another's waits on an answer. Telling her the second
+                        // is the first — "you have not said it out loud" about a
+                        // thing she just said — would have her raise it again on
+                        // the next line, so they are rendered as separate
+                        // sections from separate decorators rather than switched
+                        // between. Registered alongside the text one because the
+                        // bio prompt names all three, and an unregistered name is
+                        // a parse error for the whole file.
+                        SkyrimNetAPI::RegisterDecorator(
+                            PendingImpulses::kSpokenDecoratorName,
+                            "AgencyEngine: everything this companion has raised out loud and had no answer to, "
+                            "newest first, one per line as a markdown list item — or an empty string when there is "
+                            "nothing.",
+                            [](RE::Actor* actor) -> std::string {
+                                if (!actor) {
+                                    return {};
+                                }
+                                return PendingImpulses::GetSpoken(actor->GetFormID());
+                            });
+
+                        // Nothing this build ships calls this one. It stays
+                        // registered for an install whose prompt files are older
+                        // than its DLL: Inja resolves decorator names at parse
+                        // time, so an unregistered name costs that install its
+                        // whole character bio rather than one block of it.
                         SkyrimNetAPI::RegisterDecorator(
                             PendingImpulses::kStateDecoratorName,
-                            "AgencyEngine: 'carried' when this companion has not said her pending impulse out loud, "
-                            "'spoken' when she has raised it and it has not been answered, empty when there is none.",
+                            "AgencyEngine: compatibility only — 'carried' when this companion is carrying anything "
+                            "unsaid, 'spoken' when the only thing open is something she has raised, empty when there "
+                            "is nothing.",
                             [](RE::Actor* actor) -> std::string {
                                 if (!actor) {
                                     return {};

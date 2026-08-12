@@ -167,7 +167,10 @@ namespace AgencyEngine::UI
                 if (state.pendingImpulses.empty()) {
                     ImGui::TextDisabled("%s", "Nobody is carrying anything.");
                 } else {
-                    ImGui::Text("%d companion(s) carrying something unsaid.",
+                    // Impulses, not companions: one companion can be carrying
+                    // one from each lens, and the number people watch while
+                    // tuning is how many subjects are open at once.
+                    ImGui::Text("%d impulse(s) open across the party.",
                                 static_cast<int>(state.pendingImpulses.size()));
                     ImGui::TextDisabled("%s", "The list is on the 'Carried' page.");
                 }
@@ -834,20 +837,27 @@ namespace AgencyEngine::UI
             const auto queued = Director::PendingResolveRequests();
             if (ImGui::Button("Check all now")) {
                 for (const auto& entry : pending) {
-                    Director::RequestResolveCheck(entry.formID);
+                    Director::RequestResolveCheck(entry.formID, entry.lens);
                 }
             }
             HelpMarker("Asks the LLM, for each one, whether the subject has since been had out - and clears the\n"
-                       "ones that have. One call per companion, run one at a time rather than all at once.\n"
-                       "Works even with the scheduled check switched off.");
+                       "ones that have. One call per impulse rather than per companion, because each is its own\n"
+                       "question, and they run one at a time rather than all at once. Works even with the\n"
+                       "scheduled check switched off.");
             if (queued > 0) {
                 ImGui::SameLine();
                 ImGui::TextColored(kWarn, "%d check(s) queued", static_cast<int>(queued));
             }
 
-            for (const auto& entry : pending) {
-                ImGui::PushID(static_cast<int>(entry.formID));
-                ImGui::SeparatorText(entry.speakerName.c_str());
+            // One row per impulse, and a companion can occupy several: the ID
+            // is the row index rather than the FormID, or two of her rows would
+            // share every widget on them.
+            for (int row = 0; row < static_cast<int>(pending.size()); ++row) {
+                const auto& entry = pending[static_cast<std::size_t>(row)];
+                ImGui::PushID(row);
+                ImGui::SeparatorText(entry.lens.empty()
+                                         ? entry.speakerName.c_str()
+                                         : std::format("{}  |  {} question", entry.speakerName, entry.lens).c_str());
 
                 ImGui::TextColored(kSpeaker, "%s -> %s", entry.speakerName.c_str(), entry.targetName.c_str());
                 ImGui::SameLine();
@@ -887,9 +897,10 @@ namespace AgencyEngine::UI
                 const double anchor = entry.spoken ? entry.spokenGameDays : entry.createdGameDays;
                 const double ageMinutes = (snapshot.gameDays - anchor) * 24.0 * 60.0;
                 const double ttlLeft = settings.pendingTtlGameMinutes - ageMinutes;
-                ImGui::TextDisabled("%s for %.0f in-game minutes%s", entry.spoken ? "unanswered" : "carried",
-                                    ageMinutes < 0.0 ? 0.0 : ageMinutes,
-                                    entry.lens.empty() ? "" : std::format("  |  {} question", entry.lens).c_str());
+                // The lens is on the row's header already, so this is only the
+                // clock.
+                ImGui::TextDisabled("%s for %.0f in-game minutes", entry.spoken ? "unanswered" : "carried",
+                                    ageMinutes < 0.0 ? 0.0 : ageMinutes);
                 if (settings.pendingTtlGameMinutes > 0.0f) {
                     ImGui::TextDisabled("forgotten in %.0f in-game minutes", ttlLeft < 0.0 ? 0.0 : ttlLeft);
                 }
@@ -916,7 +927,7 @@ namespace AgencyEngine::UI
                 }
 
                 if (ImGui::Button("Check now")) {
-                    Director::RequestResolveCheck(entry.formID);
+                    Director::RequestResolveCheck(entry.formID, entry.lens);
                 }
                 HelpMarker("One LLM call: has she had this out since it was recorded? Cleared if yes, left alone\n"
                            "if no or if the answer cannot be read.");
@@ -926,11 +937,15 @@ namespace AgencyEngine::UI
                     // this is safe from the render thread. The Status mirror is
                     // rebuilt on the Director's next pass; erase it here too so
                     // the row goes away on this frame rather than in a second.
-                    PendingImpulses::Clear(entry.formID, "cleared by hand from the UI");
+                    // This row only — anything else she is carrying came from
+                    // another lens and is nobody's business but its own.
+                    PendingImpulses::Clear(entry.formID, entry.lens, "cleared by hand from the UI");
                     const auto formID = entry.formID;
+                    const auto lens = entry.lens;
                     WithState([&](Status& state) {
-                        std::erase_if(state.pendingImpulses,
-                                      [&](const PendingImpulses::Entry& e) { return e.formID == formID; });
+                        std::erase_if(state.pendingImpulses, [&](const PendingImpulses::Entry& e) {
+                            return e.formID == formID && e.lens == lens;
+                        });
                     });
                 }
                 HelpMarker("Drops it immediately. She stops carrying it and it leaves her bio; nothing else\n"
@@ -942,7 +957,7 @@ namespace AgencyEngine::UI
             ImGui::Separator();
             if (ImGui::Button("Forget all")) {
                 for (const auto& entry : pending) {
-                    PendingImpulses::Clear(entry.formID, "cleared by hand from the UI (forget all)");
+                    PendingImpulses::Clear(entry.formID, entry.lens, "cleared by hand from the UI (forget all)");
                 }
                 WithState([](Status& state) { state.pendingImpulses.clear(); });
             }

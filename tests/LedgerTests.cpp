@@ -1,10 +1,15 @@
-// The ledger, tested through the same calls the Director makes.
+// The carried impulses and the ledger, tested through the same calls the
+// Director makes.
 //
 // This is the one seam in the mod worth an offline test: it is pure state with
 // no game, no SkyrimNet and no LLM behind it, its arguments are integers and
 // strings, and it can regress two already-shipped lenses with no visible
 // symptom — a companion simply stops raising things, days later, for a reason
 // nothing in the log connects to a slot that was evicted by another lens.
+//
+// The same is true of multi-carry: what a companion is carrying reaches exactly
+// one prompt, through a decorator, so a regression there is invisible from
+// everywhere except her own next line.
 //
 // Everything else about the Activity lens is verified in game (the prompts have
 // no offline renderer, and whether a proposal reads well is judgement); see the
@@ -39,7 +44,7 @@ namespace
     constexpr auto          kActivity = "Activity";
 
     // Each case starts from an empty ledger, a known global cap, and the lens
-    // list the Director republishes every tick. Reset is what the plugin calls
+    // list the Director republishes on every pass. Reset is what the plugin calls
     // on a new game or a load, and the two publishing calls are what
     // Director::PumpPendingImpulses does — so none of this is a test-only door.
     //
@@ -240,6 +245,131 @@ namespace
         // repeats another's subject.
         CHECK(Ledger::LedgerTopics(kSerana).size() == 9);
     }
+
+    // ---- what she is carrying ---------------------------------------------
+
+    Ledger::Entry Carried(std::uint32_t formID, const char* speaker, const char* lens, const char* topic,
+                          const char* text, double gameDays = 10.0)
+    {
+        Ledger::Entry entry;
+        entry.formID = formID;
+        entry.speakerName = speaker;
+        entry.targetName = "the Dragonborn";
+        entry.lens = lens;
+        entry.topic = topic;
+        entry.text = text;
+        entry.createdGameDays = gameDays;
+        return entry;
+    }
+
+    bool Holds(const std::string& haystack, const char* needle)
+    {
+        return haystack.find(needle) != std::string::npos;
+    }
+
+    // The point of multi-carry: two lenses coming due together used to mean one
+    // of them threw the other's question away, silently, for no reason anyone
+    // could see from the game.
+    void TwoLensesCoexistAndRenderNewestFirst()
+    {
+        Begin("two lenses' impulses coexist in one bio, newest first");
+
+        Ledger::Set(Carried(kSerana, "Serana", kAspiration, "her father", "She has been meaning to say ..."));
+        Ledger::Set(Carried(kSerana, "Serana", kActivity, "a drink", "She would like a drink with him."));
+
+        const auto rendered = Ledger::Get(kSerana);
+        CHECK(Holds(rendered, "She has been meaning to say ..."));
+        CHECK(Holds(rendered, "She would like a drink with him."));
+        // Newest first, so the drink — set second — leads.
+        CHECK(rendered.find("She would like a drink") < rendered.find("She has been meaning"));
+        // One line each, so a line break is unambiguously a separator between
+        // two subjects rather than something inside one.
+        CHECK(std::ranges::count(rendered, '\n') == 1);
+        CHECK(Ledger::Count() == 2);
+        // Somebody else's bio is untouched by either.
+        CHECK(Ledger::Get(kLydia).empty());
+    }
+
+    // Within a lens the old rule stands: a second impulse supersedes, because a
+    // lens returning to the same register twice is the nag this avoids.
+    void ASecondFromTheSameLensSupersedes()
+    {
+        Begin("a second impulse from the same lens supersedes rather than stacks");
+
+        Ledger::Set(Carried(kSerana, "Serana", kAspiration, "her father", "The first one."));
+        Ledger::Set(Carried(kSerana, "Serana", kActivity, "a drink", "A drink."));
+        Ledger::Set(Carried(kSerana, "Serana", kAspiration, "the moth priest", "The second one."));
+
+        CHECK(Ledger::Count() == 2);
+        const auto rendered = Ledger::Get(kSerana);
+        CHECK(!Holds(rendered, "The first one."));
+        CHECK(Holds(rendered, "The second one."));
+        CHECK(Holds(rendered, "A drink."));
+    }
+
+    // Resolution is per impulse. One being met says nothing about the others,
+    // and the ledger slot it confirms is its own.
+    void ImpulsesResolveIndependently()
+    {
+        Begin("each carried impulse resolves on its own, and takes only its own slot");
+
+        Ledger::Set(Carried(kSerana, "Serana", kAspiration, "her father", "The unsaid thing."));
+        Ledger::Set(Carried(kSerana, "Serana", kActivity, "a drink", "The drink."));
+
+        // The check comes due per entry, oldest check first, and marking one
+        // does not mark the other.
+        auto due = Ledger::NextDueForCheck(11.0, 60.0f);
+        CHECK(due.has_value() && due->lens == kAspiration);
+        Ledger::MarkChecked(kSerana, kAspiration, 11.0);
+        due = Ledger::NextDueForCheck(11.0, 60.0f);
+        CHECK(due.has_value() && due->lens == kActivity);
+
+        // The aspiration is judged met; the drink is untouched, and so is the
+        // ring the drink would have used.
+        Ledger::Clear(kSerana, kAspiration, "resolved", Disposition::Confirm);
+        CHECK(Ledger::Count() == 1);
+        CHECK(Holds(Ledger::Get(kSerana), "The drink."));
+        CHECK(Ledger::LedgerSuppresses(kSerana, "her father", kAspiration));
+        CHECK(!Ledger::LedgerSuppresses(kSerana, "a drink", kActivity));
+    }
+
+    // Said and unsaid are separate blocks in the bio, and a companion can be in
+    // both states at once — telling her she has not said a thing she just said
+    // is how she comes to say it twice.
+    void SaidAndUnsaidRenderSeparately()
+    {
+        Begin("what she has said and what she has not are rendered apart");
+
+        Ledger::Set(Carried(kSerana, "Serana", kAspiration, "her father", "The unsaid thing."));
+        auto spoken = Carried(kSerana, "Serana", kActivity, "a drink", "The one she asked for.");
+        spoken.spoken = true;
+        spoken.spokenGameDays = 10.0;
+        Ledger::Set(spoken);
+
+        CHECK(Ledger::Get(kSerana) == "- The unsaid thing.");
+        CHECK(Ledger::GetSpoken(kSerana) == "- The one she asked for.");
+        // The compatibility decorator prefers the unsaid one, which is the
+        // wording an older prompt file renders by default.
+        CHECK(Ledger::State(kSerana) == "carried");
+    }
+
+    // Clearing by actor is for the two callers that mean the actor rather than
+    // one of her subjects — the load-order check and the UI's Forget button.
+    void ClearAllTakesEverythingSheIsCarrying()
+    {
+        Begin("clearing by actor drops every lens's impulse and nobody else's");
+
+        Ledger::Set(Carried(kSerana, "Serana", kAspiration, "her father", "One."));
+        Ledger::Set(Carried(kSerana, "Serana", kActivity, "a drink", "Two."));
+        Ledger::Set(Carried(kLydia, "Lydia", kActivity, "sparring", "Three."));
+
+        CHECK(Ledger::ClearAll(kSerana, "stale") == 2);
+        CHECK(Ledger::Get(kSerana).empty());
+        CHECK(Holds(Ledger::Get(kLydia), "Three."));
+        // Withdrawn, not confirmed: nothing about a stale entry says the subject
+        // was ever answered.
+        CHECK(!Ledger::LedgerSuppresses(kSerana, "her father", kAspiration));
+    }
 }
 
 int main()
@@ -254,6 +384,12 @@ int main()
     AProvisionalSlotIsDecidedByItsVerdict();
     ARepeatMovesToNewestRatherThanTakingASecondSlot();
     ALegacySlotKeepsSharedRingBehaviour();
+
+    TwoLensesCoexistAndRenderNewestFirst();
+    ASecondFromTheSameLensSupersedes();
+    ImpulsesResolveIndependently();
+    SaidAndUnsaidRenderSeparately();
+    ClearAllTakesEverythingSheIsCarrying();
 
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

@@ -15,15 +15,25 @@
    speech style (9990). `npc` is the character whose bio is being rendered.
 
    Two decorators, both answered by AgencyEngine.dll rather than by Papyrus.
-   agencyengine_pending_impulse returns the text; agencyengine_pending_state
-   returns "carried" or "spoken" and picks which wording below renders. Both are
-   empty when there is nothing pending, which is the usual case.
+   agencyengine_pending_impulse returns what she has NOT said;
+   agencyengine_pending_spoken returns what she HAS said and had nothing back
+   on. Both are empty when there is nothing, which is the usual case, and both
+   return a markdown list — one line per impulse, newest first.
 
-   The two wordings are not interchangeable. An entry survives a speaking turn
-   now — the loop stopped deleting it at dispatch, because "she said it" and "it
-   got anywhere" are different questions. Rendering the carried wording over a
-   spoken entry would tell her she has not said a thing she just said, on every
-   dialogue call, and she would say it again immediately.
+   ONE PER LENS, SO THERE CAN BE SEVERAL. Lenses run on independent clocks, so
+   a companion can be carrying an aspiration, a standing she has never voiced
+   and a proposal at the same time. The DLL renders them newest first and this
+   file frames the first as the one most on her mind; that framing is the whole
+   mitigation for the stacking case, and it is the thing to tune if three
+   carried subjects come out as one overloaded speech rather than as one thing
+   at a time. (Recorded as an open validation in docs/adr/0004.)
+
+   The two wordings are not interchangeable, and she can need both at once. An
+   entry survives a speaking turn — the loop stopped deleting it at dispatch,
+   because "she said it" and "it got anywhere" are different questions.
+   Rendering the carried wording over something she has said would tell her she
+   has not said a thing she just said, on every dialogue call, and she would say
+   it again immediately.
 
    ---------------------------------------------------------------------------
    THE render_mode GUARD IS LOAD-BEARING. DO NOT DROP IT.
@@ -56,7 +66,7 @@
    restructuring.
 
    ---------------------------------------------------------------------------
-   TUNING. The body below restrains *how* she opens the subject, not *whether*
+   TUNING. The body below restrains *how* she opens a subject, not *whether*
    she ever does. An earlier draft said "most of the time it will not come up";
    that was a second layer of suppression on top of the impulse prompt's own,
    which has already decided this is worth carrying by the time this renders.
@@ -66,36 +76,36 @@
    the nag failure the impulse prompt spends several paragraphs avoiding.
    ========================================================================== #}
 {% set agencyengine_pending = agencyengine_pending_impulse(npc.UUID) %}
-{% set agencyengine_state = agencyengine_pending_state(npc.UUID) %}
+{% set agencyengine_spoken = agencyengine_pending_spoken(npc.UUID) %}
 {% if agencyengine_pending != "" %}
-{% if agencyengine_state == "spoken" %}
-## Something {{ decnpc(npc.UUID).name }} has raised and not had answered
-
-You said this. It was not taken up — it was brushed past, deferred, or lost in
-whatever came next.
-
-> {{ agencyengine_pending }}
-
-You have had your say, and you are not looking to say it again. It sits between
-you and them, and it colours how you are with them: a little shorter, a little
-further back than you would otherwise be.
-
-Do not re-open it. If they come to it, you have plenty to say.
-{% else %}
 ## Something {{ decnpc(npc.UUID).name }} has been meaning to raise
 
 This is yours and nobody else's. You have not said it out loud, and nobody
-around you knows it is there.
+around you knows it is there. The first one listed is the one most on your
+mind; anything under it is further back, and it can stay there.
 
-> {{ agencyengine_pending }}
+{{ agencyengine_pending }}
 
 It is a subject you have been carrying, not a script and not a decision. You
 have been waiting for an opening. It is what you are half thinking about
 underneath whatever you are actually saying, and it is where you steer when
 the talk gives you room.
 
-Raise it when there is room. Open it small — you have not committed to how it
-goes, and you would still walk it back if it did not land.
+Raise it when there is room, and raise one thing. Open it small — you have not
+committed to how it goes, and you would still walk it back if it did not land.
 {% endif %}
+{% if agencyengine_spoken != "" %}
+## Something {{ decnpc(npc.UUID).name }} has raised and not had answered
+
+You said this. It was not taken up — it was brushed past, deferred, or lost in
+whatever came next.
+
+{{ agencyengine_spoken }}
+
+You have had your say, and you are not looking to say it again. It sits between
+you and them, and it colours how you are with them: a little shorter, a little
+further back than you would otherwise be.
+
+Do not re-open it. If they come to it, you have plenty to say.
 {% endif %}
 {% endif %}

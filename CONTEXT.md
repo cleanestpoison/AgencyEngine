@@ -106,8 +106,10 @@ _Avoid_: shared goal, group activity
 
 **Pending impulse**:
 The recorded impulse a companion is carrying, held in the DLL and rendered into her own character bio
-by a decorator. One per companion; a second supersedes rather than stacks. Never an event — events
-carry an audience derived from proximity and cannot be made private.
+by a decorator. **One per companion per lens** — a second from the same lens supersedes rather than
+stacks, but another lens's is a different question and coexists with it. Every one she carries renders,
+newest first. Never an event — events carry an audience derived from proximity and cannot be made
+private.
 _Avoid_: memory, thought, note
 
 **Carried / Spoken**:
@@ -144,7 +146,9 @@ _Avoid_: relationship score, rapport, affinity
 - The **Lens roster** comes from the build; the config holds the switch, the cadence and the ring size,
   by **Lens id**
 - An **Impulse** becomes at most one **Pending impulse**, which is **Carried** and may become **Spoken**
-- **Resolution** decides a **Pending impulse**, and the question it asks depends on Topic vs Proposal
+- A companion holds at most one **Pending impulse** per **Lens**, and may hold one from each at once
+- **Resolution** decides one **Pending impulse** at a time, and the question it asks depends on Topic vs
+  Proposal
 - A resolved **Pending impulse** confirms a **Ledger** slot; an unresolved one withdraws it
 - Each **Lens** evicts only within its own **Ledger** ring, so lenses cannot bury each other's subjects
 - **Standing** supplies the subject for the **Relationship lens** and the licence for the **Activity lens**

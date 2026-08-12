@@ -133,11 +133,36 @@ namespace AgencyEngine::PendingImpulses
                 .count();
         }
 
-        // g_lock must be held.
-        Entry* FindLocked(std::uint32_t formID)
+        // g_lock must be held. One impulse: an actor and the lens that wrote it.
+        Entry* FindLocked(std::uint32_t formID, std::string_view lens)
         {
-            const auto it = std::ranges::find_if(g_entries, [&](const Entry& e) { return e.formID == formID; });
+            const auto it = std::ranges::find_if(
+                g_entries, [&](const Entry& e) { return e.formID == formID && e.lens == lens; });
             return it == g_entries.end() ? nullptr : &*it;
+        }
+
+        // g_lock must be held. Every impulse this actor is carrying, newest
+        // first — the list is kept in the order entries were set, so recency is
+        // the reverse of it.
+        std::string RenderLocked(std::uint32_t formID, bool spoken)
+        {
+            std::string out;
+            for (auto it = g_entries.rbegin(); it != g_entries.rend(); ++it) {
+                // An unverified entry is withheld rather than rendered. It is one
+                // Director pass from being either confirmed or dropped, and
+                // rendering a possibly-misattributed agenda into somebody's bio
+                // is the one failure this whole design exists to avoid.
+                if (it->formID != formID || it->unverified || it->spoken != spoken) {
+                    continue;
+                }
+                // A list rather than a paragraph, and one line per entry:
+                // Set() has already flattened newlines out of the text, so a
+                // line break here is unambiguously a separator between two
+                // subjects and never something inside one.
+                out += out.empty() ? "- " : "\n- ";
+                out += it->text;
+            }
+            return out;
         }
 
         double GameMinutesToDays(float minutes)
@@ -331,18 +356,25 @@ namespace AgencyEngine::PendingImpulses
 
         {
             std::scoped_lock lock{ g_lock };
-            if (auto* existing = FindLocked(entry.formID)) {
-                logger::info("{} was already {}; the new impulse supersedes it. Was: {}", entry.speakerName,
+            // Only this lens's entry is displaced. What another lens put there
+            // is a different question with its own clock behind it, and taking
+            // it down would throw away an ask nobody could see happen.
+            if (auto* existing = FindLocked(entry.formID, entry.lens)) {
+                logger::info("{} was already {} under the {} lens; the new impulse supersedes it. Was: {}",
+                             entry.speakerName,
                              existing->spoken ? "waiting on an answer about something else"
                                               : "carrying something unsaid",
-                             OneLine(existing->text));
+                             entry.lens.empty() ? "unnamed" : entry.lens, OneLine(existing->text));
                 supersededFormID = existing->formID;
                 supersededTopic = existing->topic;
                 supersededWasSpoken = existing->spoken;
-                *existing = std::move(entry);
-            } else {
-                g_entries.push_back(std::move(entry));
+                std::erase_if(g_entries, [&](const Entry& e) {
+                    return e.formID == entry.formID && e.lens == entry.lens;
+                });
             }
+            // Appended either way, so the list stays in recency order and the
+            // bio renders the newest thing on her mind first.
+            g_entries.push_back(std::move(entry));
             g_dirty = true;
         }
 
@@ -360,33 +392,35 @@ namespace AgencyEngine::PendingImpulses
     std::string Get(std::uint32_t formID)
     {
         std::scoped_lock lock{ g_lock };
-        const auto* entry = FindLocked(formID);
-        // An unverified entry is withheld rather than rendered. It is one
-        // Director pass from being either confirmed or dropped, and rendering a
-        // possibly-misattributed agenda into somebody's bio is the one failure
-        // this whole design exists to avoid.
-        if (!entry || entry->unverified) {
-            return {};
-        }
-        return entry->text;
+        return RenderLocked(formID, false);
     }
 
-    bool Clear(std::uint32_t formID, std::string_view reason, Disposition disposition)
+    std::string GetSpoken(std::uint32_t formID)
+    {
+        std::scoped_lock lock{ g_lock };
+        return RenderLocked(formID, true);
+    }
+
+    bool Clear(std::uint32_t formID, std::string_view lens, std::string_view reason, Disposition disposition)
     {
         Entry removed;
         {
             std::scoped_lock lock{ g_lock };
-            auto* entry = FindLocked(formID);
-            if (!entry) {
+            const auto it = std::ranges::find_if(
+                g_entries, [&](const Entry& e) { return e.formID == formID && e.lens == lens; });
+            if (it == g_entries.end()) {
                 return false;
             }
-            removed = std::move(*entry);
-            std::erase_if(g_entries, [&](const Entry& e) { return e.formID == formID; });
+            // Erased through the iterator rather than matched a second time:
+            // moving the entry out leaves its `lens` empty, so a second pass
+            // keyed on the lens would find nothing and leave the husk behind.
+            removed = std::move(*it);
+            g_entries.erase(it);
             g_dirty = true;
         }
 
-        logger::info("Pending impulse cleared ({}): {} was carrying — {}", reason, removed.speakerName,
-                     OneLine(removed.text));
+        logger::info("Pending impulse cleared ({}): {} was carrying, under the {} lens — {}", reason,
+                     removed.speakerName, removed.lens.empty() ? "unnamed" : removed.lens, OneLine(removed.text));
 
         if (!removed.topic.empty()) {
             if (disposition == Disposition::Confirm) {
@@ -411,14 +445,44 @@ namespace AgencyEngine::PendingImpulses
         return true;
     }
 
+    std::size_t ClearAll(std::uint32_t formID, std::string_view reason)
+    {
+        // Collected first and cleared one at a time, so each one goes through
+        // the ledger disposition Clear owns rather than a second copy of it.
+        std::vector<std::string> lenses;
+        {
+            std::scoped_lock lock{ g_lock };
+            for (const auto& entry : g_entries) {
+                if (entry.formID == formID) {
+                    lenses.push_back(entry.lens);
+                }
+            }
+        }
+        std::size_t cleared = 0;
+        for (const auto& lens : lenses) {
+            cleared += Clear(formID, lens, reason) ? 1u : 0u;
+        }
+        return cleared;
+    }
+
     std::string State(std::uint32_t formID)
     {
         std::scoped_lock lock{ g_lock };
-        const auto* entry = FindLocked(formID);
-        if (!entry || entry->unverified) {
-            return {};
+        // Newest first, and an unsaid one wins: the carried wording is the one
+        // an old prompt file renders by default, and it is the safe answer of
+        // the two — telling her she has said something she has not costs an
+        // impulse, where the reverse costs a repeat the resolution check catches.
+        bool anySpoken = false;
+        for (auto it = g_entries.rbegin(); it != g_entries.rend(); ++it) {
+            if (it->formID != formID || it->unverified) {
+                continue;
+            }
+            if (!it->spoken) {
+                return "carried";
+            }
+            anySpoken = true;
         }
-        return entry->spoken ? "spoken" : "carried";
+        return anySpoken ? "spoken" : "";
     }
 
     void LedgerRecord(std::uint32_t formID, std::string speakerName, std::string topic, std::string lens,
@@ -586,7 +650,10 @@ namespace AgencyEngine::PendingImpulses
         }
         const auto ttlDays = GameMinutesToDays(ttlGameMinutes);
 
-        std::vector<std::uint32_t> expired;
+        // Per impulse, not per companion: each carries its own clock from
+        // whenever its lens landed it, and one expiring says nothing about the
+        // others she is holding.
+        std::vector<std::pair<std::uint32_t, std::string>> expired;
         {
             std::scoped_lock lock{ g_lock };
             for (const auto& entry : g_entries) {
@@ -594,12 +661,12 @@ namespace AgencyEngine::PendingImpulses
                 // and an impulse from a future that no longer happened should be
                 // dropped by Reset(), not aged out to a negative number here.
                 if (nowGameDays - AgeAnchor(entry) > ttlDays) {
-                    expired.push_back(entry.formID);
+                    expired.emplace_back(entry.formID, entry.lens);
                 }
             }
         }
-        for (const auto formID : expired) {
-            Clear(formID, "ttl");
+        for (const auto& [formID, lens] : expired) {
+            Clear(formID, lens, "ttl");
         }
     }
 
@@ -626,10 +693,10 @@ namespace AgencyEngine::PendingImpulses
         return best ? std::optional<Entry>{ *best } : std::nullopt;
     }
 
-    void MarkChecked(std::uint32_t formID, double nowGameDays)
+    void MarkChecked(std::uint32_t formID, std::string_view lens, double nowGameDays)
     {
         std::scoped_lock lock{ g_lock };
-        if (auto* entry = FindLocked(formID)) {
+        if (auto* entry = FindLocked(formID, lens)) {
             entry->lastCheckGameDays = nowGameDays;
             g_dirty = true;
         }

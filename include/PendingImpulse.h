@@ -37,11 +37,25 @@ namespace AgencyEngine::PendingImpulses
     // The decorator SkyrimNet calls to reach Get(). Registered from
     // SkyrimNetAPI::RegisterDecorator on kDataLoaded; referenced by name in the
     // bio prompt, so the two must be changed together.
+    //
+    // It returns every impulse she is carrying unsaid, newest first, one per
+    // line as a markdown list item — not a single entry. One companion can be
+    // carrying one per lens now, and the block that renders them is one block.
     inline constexpr auto kDecoratorName = "agencyengine_pending_impulse";
 
-    // The companion piece: returns "carried" / "spoken" / "" so the same bio
-    // block can say "you have not said this" or "you said this and it went
-    // unanswered" without a second decorator call per wording.
+    // The same, for what she has raised and had nothing back on. A second
+    // decorator rather than a state flag because a companion can be in both
+    // states at once — carrying an aspiration she has not voiced while waiting
+    // on an answer to a proposal she has — and the bio's two wordings are not
+    // interchangeable.
+    inline constexpr auto kSpokenDecoratorName = "agencyengine_pending_spoken";
+
+    // Compatibility only: "carried" / "spoken" / "", the shape the bio prompt
+    // used when a companion could hold exactly one impulse. Still registered
+    // because Inja resolves decorator names when it *parses* a file — an
+    // install whose prompt file is older than its DLL would otherwise lose the
+    // whole bio to a parse error rather than one block of it. Answers for the
+    // newest entry, preferring an unsaid one. Nothing this build ships calls it.
     inline constexpr auto kStateDecoratorName = "agencyengine_pending_state";
 
     struct Entry
@@ -82,14 +96,32 @@ namespace AgencyEngine::PendingImpulses
         bool          unverified = false;
     };
 
-    // Record `entry` as `formID`'s pending impulse, replacing any previous one.
-    // One per actor: a second agenda does not stack, it supersedes, because two
-    // things she has been meaning to raise read as a list rather than a person.
+    // Record `entry` as `formID`'s pending impulse for its lens, replacing
+    // whatever that lens left there before.
+    //
+    // ONE PER COMPANION PER LENS. It used to be one per companion outright, on
+    // the reasoning that two things she has been meaning to raise read as a list
+    // rather than a person. What changed is that lenses now run on independent
+    // clocks (docs/adr/0003), so two lenses coming due together is ordinary
+    // rather than a collision — and the lens that lost would have had its
+    // question thrown away for no reason anyone could see. Within a lens the old
+    // rule stands: a second impulse supersedes rather than stacks, because a
+    // lens returning to the same register twice is the nag this design exists to
+    // avoid. See docs/adr/0004.
+    //
+    // Newest wins the front of the bio: the entry moves to the end of the list,
+    // which is what Get renders first.
     void Set(Entry entry);
 
-    // The decorator path. Returns the pending text, or "" when there is none —
-    // the prompt guards on empty. Never blocks on anything but its own lock.
+    // The decorator path. Every impulse `formID` is carrying *unsaid*, newest
+    // first, one per line as `- <stage direction>`; "" when there is none, which
+    // is what the prompt guards on. Never blocks on anything but its own lock.
     std::string Get(std::uint32_t formID);
+
+    // The same for what she has raised and had no answer to. Kept apart from
+    // Get because the bio says something quite different about each, and a
+    // companion can be in both states at once.
+    std::string GetSpoken(std::uint32_t formID);
 
     // What clearing an entry does to the ledger slot it left behind. Passed
     // explicitly rather than sniffed out of `reason`, which is free text written
@@ -105,16 +137,28 @@ namespace AgencyEngine::PendingImpulses
         Confirm,
     };
 
-    // Drops `formID`'s pending impulse and logs why. `reason` is one of "ttl",
-    // "resolved", "spoken", "stale" — a bio line that silently persists reads as
-    // fixation and is near-impossible to diagnose after the fact, so every clear
-    // names itself. Returns false when there was nothing to clear.
-    bool Clear(std::uint32_t formID, std::string_view reason, Disposition disposition = Disposition::Withdraw);
+    // Drops one impulse — `formID`'s, from `lens` — and logs why. `reason` is
+    // one of "ttl", "resolved", "spoken", "stale": a bio line that silently
+    // persists reads as fixation and is near-impossible to diagnose after the
+    // fact, so every clear names itself. Returns false when there was nothing
+    // to clear.
+    //
+    // Keyed on the lens as well as the actor, because she can be carrying one
+    // from each: clearing by actor alone would have a resolved proposal take an
+    // untouched aspiration down with it.
+    bool Clear(std::uint32_t formID, std::string_view lens, std::string_view reason,
+               Disposition disposition = Disposition::Withdraw);
 
-    // Her state, for the bio decorator: "" when nothing is pending, "carried"
-    // when she has not said it, "spoken" when she has. A separate decorator from
-    // the text one so the prompt can branch its wording without parsing a
-    // sentinel out of the impulse itself.
+    // Everything `formID` is carrying, for the two callers that mean the actor
+    // rather than one of her subjects: the load-order check, which has decided
+    // this FormID is not who it was written for, and the UI's Forget button.
+    // Returns how many went. Withdraws every slot, like Clear's default.
+    std::size_t ClearAll(std::uint32_t formID, std::string_view reason);
+
+    // Compatibility shim for a bio prompt older than multi-carry: "carried" when
+    // she is carrying anything unsaid, "spoken" when the only thing open is
+    // something she has raised, "" when there is nothing. See
+    // kStateDecoratorName.
     std::string State(std::uint32_t formID);
 
     std::vector<Entry> Snapshot();
@@ -158,9 +202,11 @@ namespace AgencyEngine::PendingImpulses
     // that owns it dies (see Disposition). Provisional slots suppress exactly
     // like confirmed ones — the immediate next-ask repeat is what they are for
     // — but they are withdrawn rather than kept if the subject turns out never
-    // to have been answered. At most one slot per character is provisional at a
-    // time, because Set() allows only one pending entry per actor, so the cap
-    // can never evict a slot whose entry is still live.
+    // to have been answered. At most one slot per character *per lens* is
+    // provisional at a time, because Set() allows one pending entry per lens and
+    // a lens only ever evicts within its own ring — so a live entry's slot can
+    // only be displaced by the next record from the same lens, which is the one
+    // that superseded it.
 
     struct LedgerSlot
     {
@@ -238,11 +284,13 @@ namespace AgencyEngine::PendingImpulses
     // survive a night spent sleeping.
     void ExpireOlderThan(double nowGameDays, float ttlGameMinutes);
 
-    // The entry whose resolution check is due, if any, oldest check first. Call
-    // MarkChecked as soon as the request is dispatched — not when it answers, or
-    // an unanswered check retries every pass.
+    // The entry whose resolution check is due, if any, oldest check first. One
+    // entry, not one companion: each carried impulse is a separate question with
+    // its own answer, so they are checked independently and a check on one never
+    // decides another. Call MarkChecked as soon as the request is dispatched —
+    // not when it answers, or an unanswered check retries every pass.
     std::optional<Entry> NextDueForCheck(double nowGameDays, float intervalGameMinutes);
-    void                 MarkChecked(std::uint32_t formID, double nowGameDays);
+    void                 MarkChecked(std::uint32_t formID, std::string_view lens, double nowGameDays);
 
     // Entries restored from disk that have not been matched against the game
     // yet. Marks them verified as it hands them over, so this returns each one

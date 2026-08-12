@@ -166,8 +166,19 @@ namespace AgencyEngine::Director
         // thread, drained on the Director thread, so it needs its own lock —
         // and a deque rather than a flag because "Check all" on a party of five
         // is five requests that must not collapse into one.
-        std::mutex                g_resolveRequestLock;
-        std::deque<std::uint32_t> g_resolveRequests;
+        //
+        // One request names one impulse — the actor and the lens that wrote it —
+        // because a companion carrying three of them has three separate
+        // questions outstanding and the button is drawn per row.
+        struct ResolveRequest
+        {
+            std::uint32_t formID = 0;
+            std::string   lens;
+
+            bool operator==(const ResolveRequest&) const = default;
+        };
+        std::mutex                 g_resolveRequestLock;
+        std::deque<ResolveRequest> g_resolveRequests;
 
         // Is the party quiet enough to speak into?
         //
@@ -1730,16 +1741,20 @@ namespace AgencyEngine::Director
             SKSE::GetTaskInterface()->AddTask([restored = std::move(restored)]() {
                 for (const auto& entry : restored) {
                     auto* actor = RE::TESForm::LookupByID<RE::Actor>(entry.formID);
+                    // Both checks are about the *actor*, not about one of her
+                    // subjects, so they take everything she was carrying with
+                    // them — a FormID that now names somebody else names them
+                    // for every lens at once.
                     if (!actor) {
-                        PendingImpulses::Clear(entry.formID,
-                                               "stale (no actor with that FormID — load order changed)");
+                        PendingImpulses::ClearAll(entry.formID,
+                                                  "stale (no actor with that FormID — load order changed)");
                         continue;
                     }
                     const char* name = actor->GetDisplayFullName();
                     if (!name || entry.speakerName != name) {
-                        PendingImpulses::Clear(entry.formID,
-                                               std::format("stale ({:08X} is now '{}', not '{}')", entry.formID,
-                                                           name ? name : "(unnamed)", entry.speakerName));
+                        PendingImpulses::ClearAll(entry.formID,
+                                                  std::format("stale ({:08X} is now '{}', not '{}')", entry.formID,
+                                                              name ? name : "(unnamed)", entry.speakerName));
                         continue;
                     }
                     logger::info("{} is still carrying something unsaid from before the load: {}", entry.speakerName,
@@ -1778,12 +1793,12 @@ namespace AgencyEngine::Director
                 const auto       live = PendingImpulses::Snapshot();
                 std::scoped_lock lock{ g_resolveRequestLock };
                 while (!g_resolveRequests.empty() && !due) {
-                    const auto formID = g_resolveRequests.front();
+                    const auto request = g_resolveRequests.front();
                     g_resolveRequests.pop_front();
                     // It may have been cleared — by hand, by the TTL, or by a
                     // scheduled check — between the button press and now.
                     for (const auto& entry : live) {
-                        if (entry.formID == formID && !entry.unverified) {
+                        if (entry.formID == request.formID && entry.lens == request.lens && !entry.unverified) {
                             due = entry;
                             manual = true;
                             break;
@@ -1810,7 +1825,7 @@ namespace AgencyEngine::Director
             }
             // Stamped at dispatch rather than at the answer: a check that never
             // comes back must not retry every second.
-            PendingImpulses::MarkChecked(due->formID, snap.gameDays);
+            PendingImpulses::MarkChecked(due->formID, due->lens, snap.gameDays);
 
             nlohmann::json context;
             context["npc_name"] = due->speakerName;
@@ -1836,17 +1851,17 @@ namespace AgencyEngine::Director
                 due->formID, std::max(settings.perFollowerEvents, 30), settings.eventTypeFilter));
 
             const auto payload = context.dump();
-            logger::info("Asking whether {}'s pending impulse is still live ({}, {} bytes of context)",
-                         due->speakerName, manual ? "asked for from the UI" : "on the in-game cadence",
-                         payload.size());
+            logger::info("Asking whether {}'s {} impulse is still live ({}, {} bytes of context)", due->speakerName,
+                         due->lens.empty() ? "unnamed" : due->lens,
+                         manual ? "asked for from the UI" : "on the in-game cadence", payload.size());
 
             checkInFlight.store(true);
             const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(
                 kResolvePrompt, kResolveVariant, payload,
                 // SkyrimNet worker thread. Touches only PendingImpulses, which
                 // has its own lock — no game objects, so no main-thread hop.
-                [formID = due->formID, name = due->speakerName, wasSpoken = due->spoken](std::string response,
-                                                                                        bool success) {
+                [formID = due->formID, lens = due->lens, name = due->speakerName,
+                 wasSpoken = due->spoken](std::string response, bool success) {
                     checkInFlight.store(false);
                     if (!success) {
                         logger::warn("Resolution check for {} failed — leaving the impulse pending: {}", name,
@@ -1887,7 +1902,7 @@ namespace AgencyEngine::Director
                         // way an entry dies means the subject was never answered
                         // and should be raisable again, which is what the
                         // default Withdraw does.
-                        PendingImpulses::Clear(formID,
+                        PendingImpulses::Clear(formID, lens,
                                                wasSpoken ? "resolved (what she raised was met)"
                                                          : "resolved (it was had out without her)",
                                                PendingImpulses::Disposition::Confirm);
@@ -2138,15 +2153,17 @@ namespace AgencyEngine::Director
         g_fireNow.store(true);
     }
 
-    void RequestResolveCheck(std::uint32_t formID)
+    void RequestResolveCheck(std::uint32_t formID, const std::string& lens)
     {
+        ResolveRequest request{ formID, lens };
         std::scoped_lock lock{ g_resolveRequestLock };
         // Deduplicated: the button is small, the call is not, and a double-click
-        // should not cost two.
-        if (std::ranges::find(g_resolveRequests, formID) != g_resolveRequests.end()) {
+        // should not cost two. Two impulses from the same companion are two
+        // requests, though — different questions with different answers.
+        if (std::ranges::find(g_resolveRequests, request) != g_resolveRequests.end()) {
             return;
         }
-        g_resolveRequests.push_back(formID);
+        g_resolveRequests.push_back(std::move(request));
     }
 
     std::size_t PendingResolveRequests()
