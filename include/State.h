@@ -34,15 +34,19 @@ namespace AgencyEngine
         bool        ok = true;
     };
 
-    // Spoken/quiet split for one lens, over the session. The whole reason lens
-    // selection lives in the DLL rather than the template: a lens that never
-    // speaks is invisible in a mixed history, and "the relationship turn has
-    // been silent 22 times out of 23" is the finding that decides whether it
-    // needs tracked threads or just a looser prompt.
+    // Carried/quiet split for one lens, over the session. The whole reason
+    // cadence lives in the DLL rather than the template: a lens that never
+    // produces anything is invisible in a mixed history, and "the relationship
+    // question has come back empty 22 times out of 23" is the finding that
+    // decides whether it needs tracked threads or just a looser prompt.
     struct LensTally
     {
         std::string name;
-        int         spoken = 0;
+        // Asks that produced something she now carries, against asks that came
+        // back with nobody having anything. Counted at carry, not at her saying
+        // it: a cue grants the turn and SkyrimNet writes the line, so which
+        // subject she actually raised is not something this mod observes.
+        int         carried = 0;
         int         quiet = 0;
     };
 
@@ -86,7 +90,7 @@ namespace AgencyEngine
         std::int64_t receivedAtMs = 0;  // steady clock, for staleness
     };
 
-    // Refreshed by a main-thread task once per Director tick. `valid` is false
+    // Refreshed by a main-thread task once per Director pass. `valid` is false
     // until a save is actually loaded (no player, no calendar).
     struct GameSnapshot
     {
@@ -111,8 +115,8 @@ namespace AgencyEngine
         bool   menuFrameworkPresent = false;
 
         bool   inFlight = false;       // at least one ask is outstanding
-        int    impulsesThisSession = 0;
-        int    silencesThisSession = 0;  // asks where nobody spoke up
+        int    impulsesThisSession = 0;  // asks that produced something carried
+        int    silencesThisSession = 0;  // asks where nobody had anything
         // Keyed by lens name, in first-use order. Short enough that a linear
         // scan beats a map, and the order is the one the UI wants anyway.
         std::vector<LensTally> lensTallies;
@@ -136,19 +140,19 @@ namespace AgencyEngine
         // trip doesn't leave continuous mode switched on.
         int  continuousReports = 0;
 
-        // ---- conversation-aware delivery ----------------------------------
+        // ---- conversation-aware cues --------------------------------------
         //
         // Written by the quiet sink (VM thread), read by the Director and the
-        // UI. An impulse whose LLM call has returned but which is waiting for
-        // the party to stop talking before it is spoken.
+        // UI. The impulse itself is carried the moment it comes back; what waits
+        // for the party to stop talking is the cue that announces it.
         QuietReading quiet;
-        bool         deliveryPending = false;
-        // In-game seconds the pending impulse has been waiting, for the UI.
+        bool         deliveryPending = false;   // at least one cue is waiting
+        // Real seconds the oldest waiting cue has been held, for the UI.
         double       deliveryHeldSeconds = 0.0;
 
         std::string lastError;
         std::string lastContextJson;   // debug: what we last sent
-        // Why the Director declined to fire on its most recent tick; empty
+        // Why the Director asked nothing on its most recent pass; empty
         // means nothing is blocking. Surfaced on the Status page so the answer
         // to "why is nothing happening" doesn't require opening the log.
         std::string holdReason;

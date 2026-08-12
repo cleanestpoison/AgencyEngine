@@ -132,18 +132,17 @@ namespace AgencyEngine::Director
             std::string whyNow;
         };
 
-        // A decision with its participants resolved, on its way to SkyrimNet.
+        // A decision with its participants resolved, on its way into the store.
         struct ImpulseDelivery
         {
             std::string   content;
             std::string   topic;
-            std::string   whyNow;   // carried for the delivery log only
+            std::string   whyNow;   // carried for the log only
             std::string   speakerName;
             std::string   targetName;
             std::uint64_t speakerUuid = 0;
             std::uint64_t targetUuid = 0;
             std::uint32_t speakerFormID = 0;
-            int           delivery = kPersistentEvent;
             bool          generateThought = false;
             double        gameDays = 0.0;
             std::string   lens;
@@ -154,13 +153,48 @@ namespace AgencyEngine::Director
             int           lensLedgerSlots = 0;
         };
 
-        // A finished impulse waiting for the party to stop talking, and when it
-        // started waiting. Written on the main thread by the delivery hop, read
-        // and cleared by the Director thread, so it needs its own lock — the
-        // Status mutex is held only for short reads and this holds strings.
-        std::mutex                     g_pendingLock;
-        std::optional<ImpulseDelivery> g_pending;
-        std::int64_t                   g_pendingSinceMs = 0;
+        // ---- the cue -------------------------------------------------------
+        //
+        // What is left of narration. The stage direction travels by bio now, so
+        // a cue carries no subject at all: it says she has something on her mind
+        // and grants her the speaking turn to say it, and her bio supplies what
+        // "it" is.
+        //
+        // ONE PER COMPANION, COALESCING. Several lenses coming due together
+        // produce several carries, and narrating each would either interrupt the
+        // party back to back or queue up sentences describing state minutes
+        // stale. A vague sentence is the only one that stays true while carries
+        // keep joining it — and being cheap enough to drop is the other half of
+        // that, because dropping one costs the announcement and not the impulse.
+        //
+        // Written on the main thread by the carry hop, read and cleared by the
+        // Director thread, so it needs its own lock — the Status mutex is held
+        // only for short reads and this holds strings.
+        struct PendingCue
+        {
+            std::uint32_t formID = 0;
+            std::string   speakerName;
+            std::string   targetName;
+            std::uint64_t speakerUuid = 0;
+            std::uint64_t targetUuid = 0;
+            // Real time, for maxDeferSeconds. Deliberately *not* refreshed when
+            // a second carry coalesces: the wait is for one lull, and a
+            // companion picking up an impulse every few minutes would otherwise
+            // hold a cue open indefinitely.
+            std::int64_t  setAtMs = 0;
+            // Game time, for the resolve gate — an entry checked since this is
+            // one the gate has already accounted for.
+            double        setGameDays = 0.0;
+            // How many carries have coalesced into this one cue. Log only, and
+            // the number worth watching while tuning the bio's stacking.
+            int           carries = 0;
+            // Whether the gate has already asked for the resolution checks it
+            // wants. They run one at a time on the Director's own queue, so the
+            // cue waits over several passes rather than blocking one.
+            bool          resolveRequested = false;
+        };
+        std::mutex              g_cueLock;
+        std::vector<PendingCue> g_cues;
 
         // Manual resolution checks asked for from the UI. Written on the render
         // thread, drained on the Director thread, so it needs its own lock —
@@ -406,7 +440,7 @@ namespace AgencyEngine::Director
                         state.lensTallies.push_back(LensTally{ impulse.lens, 0, 0 });
                         tally = std::prev(state.lensTallies.end());
                     }
-                    (countAsSpoken ? tally->spoken : tally->quiet) += 1;
+                    (countAsSpoken ? tally->carried : tally->quiet) += 1;
                 }
 
                 state.history.push_front(std::move(impulse));
@@ -421,37 +455,7 @@ namespace AgencyEngine::Director
             });
         }
 
-        // Asks the speaker to think privately about what they just decided to
-        // bring up. The thought lands in their own event history, which is
-        // where this mod's prompt reads thoughts back from — so it is the only
-        // thing in the loop that carries forward to the next impulse.
-        //
-        // Fired after delivery, and deliberately not waited on: generation is
-        // asynchronous, so it will land well after the speaking turn. It
-        // colours everything they say from the next call onward, not this one.
-        void SeedThought(const ImpulseDelivery& d)
-        {
-            auto* actor = RE::TESForm::LookupByID<RE::Actor>(d.speakerFormID);
-            if (!actor) {
-                logger::warn("Wanted a thought from {} ({:08X}) but they are no longer loaded — skipping",
-                             d.speakerName, d.speakerFormID);
-                return;
-            }
-
-            // Second person, matching the hint style SkyrimNet's own examples
-            // use ("The Jarl insulted your honor — how do you feel?").
-            const auto hint = std::format(
-                "You have just decided to bring something up with {}, unprompted: {} What is going through your "
-                "head as you say it, and what do you want out of it?",
-                d.targetName, d.content);
-
-            if (PapyrusBridge::GenerateNPCThought(actor, hint)) {
-                logger::info("Asked SkyrimNet for a private thought from {} about what they just raised", d.speakerName);
-            }
-        }
-
-        // The recorded delivery: the impulse becomes something the companion is
-        // privately chewing on rather than something she says.
+        // The impulse becomes something the companion is privately chewing on.
         //
         // This asks SkyrimNet to *generate* the thought from a hint rather than
         // storing our text, and that indirection is the whole point. Writing an
@@ -470,15 +474,15 @@ namespace AgencyEngine::Director
         {
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(d.speakerFormID);
             if (!actor) {
-                logger::warn("Wanted to record {}'s impulse as a thought, but they are no longer loaded ({:08X}) — "
-                             "the impulse is lost",
+                logger::warn("Wanted a private thought from {} about what she is carrying, but she is no longer "
+                             "loaded ({:08X})",
                              d.speakerName, d.speakerFormID);
                 return false;
             }
 
-            // Framed as unsaid on purpose. SeedThought's hint says "you have just
-            // decided to bring this up", which is true after a speaking turn and
-            // false here — this delivery is the one that is never voiced.
+            // Framed as unsaid on purpose, and it stays true whether or not a cue
+            // follows: a cue grants her the turn, it does not put words in her
+            // mouth, and she may still be carrying this when the scene moves on.
             const auto hint = std::format(
                 "Something about {} is sitting with you that you have NOT said out loud, and are not saying now: {} "
                 "What are you actually thinking about it, privately?",
@@ -487,15 +491,14 @@ namespace AgencyEngine::Director
             return PapyrusBridge::GenerateNPCThought(actor, hint);
         }
 
-        // The recorded delivery, done properly: the impulse is held in the DLL
-        // and reaches her next prompt through the decorator SkyrimNet calls
-        // while rendering her character bio — verbatim, privately, with no LLM
-        // call in between.
+        // The carry: the impulse is held in the DLL and reaches her next prompt
+        // through the decorator SkyrimNet calls while rendering her character
+        // bio — verbatim, privately, with no LLM call in between.
         //
-        // This supersedes RecordAsThought as the carrier of the *agenda*. The
-        // generated thought is still worth having as her private *reaction* to
-        // carrying it, so both run when 'generateThought' is on; the thought is
-        // paraphrase and colour, this is the text.
+        // This is delivery now. Narration used to carry the stage direction and
+        // grant the speaking turn in one act; the two came apart when a pass
+        // started being able to produce several carries at once (docs/adr/0004),
+        // and this is the half that carries the payload.
         bool RecordAsPendingImpulse(const ImpulseDelivery& d)
         {
             if (d.speakerFormID == 0) {
@@ -518,97 +521,131 @@ namespace AgencyEngine::Director
             return true;
         }
 
-        // The spoken counterpart. She has just said it, so the entry is created
-        // (or replaced) already marked spoken — her bio switches to the "raised
-        // and unanswered" wording, and the resolution check starts asking the
-        // other question about it.
+        // The subject takes a provisional ledger slot the moment it is carried.
         //
-        // This is where the old behaviour changed: dispatch used to Clear the
-        // entry outright, on the reasoning that there was no way to tell "the
-        // same impulse" from "a different one about the same person". The topic
-        // field is that way. Clearing also meant a spoken beat was never checked
-        // for having landed, so every one was treated as settled by assumption —
-        // which is most of why the same subject came back days later.
-        void RecordSpokenImpulse(const ImpulseDelivery& d, int ledgerSlots, bool ledgerEnabled)
+        // At carry rather than at her saying it, because we no longer learn when
+        // she says it: a cue grants a turn and SkyrimNet writes the line, so
+        // which of the things she is carrying she actually raised is not
+        // something this mod can observe. Carry is the event it owns.
+        //
+        // The slot stays provisional until the entry that owns it dies —
+        // confirmed if the resolution check judges the subject met, withdrawn
+        // otherwise — so nothing here settles a subject. It only stops the next
+        // ask proposing the same one straight back.
+        void RecordLedgerSlot(const ImpulseDelivery& d, int ledgerSlots, bool ledgerEnabled)
         {
-            if (d.speakerFormID == 0) {
-                return;
-            }
-
-            PendingImpulses::Entry entry;
-            entry.formID = d.speakerFormID;
-            entry.speakerName = d.speakerName;
-            entry.targetName = d.targetName;
-            entry.text = d.content;
-            entry.topic = d.topic;
-            entry.lens = d.lens;
-            entry.proposal = d.proposal;
-            entry.createdGameDays = d.gameDays;
-            entry.spoken = true;
-            entry.spokenGameDays = d.gameDays;
-            PendingImpulses::Set(std::move(entry));
-
             // The lens's own count decides whether there is a ring to record
             // into; the global one only stands in for a lens that asks for it.
             // Gating on the global alone meant a lens configured with three
             // slots recorded nothing whenever the global was 0.
             const auto slots = d.lensLedgerSlots > 0 ? d.lensLedgerSlots : ledgerSlots;
-            if (ledgerEnabled && slots > 0 && !d.topic.empty()) {
-                // The slot goes in this lens's own ring, sized by that lens's
-                // count — 0 there means the global one. A lens only ever
-                // displaces its own subjects, so a lens that cycles fast cannot
-                // quietly release what another one settled.
-                PendingImpulses::LedgerRecord(d.speakerFormID, d.speakerName, d.topic, d.lens,
-                                              static_cast<std::size_t>(std::max(d.lensLedgerSlots, 0)));
-                logger::info("Ledger: {} has raised '{}' under the {} lens — held until we know whether anyone met it",
-                             d.speakerName, OneLine(d.topic), d.lens.empty() ? "unnamed" : d.lens);
+            if (d.speakerFormID == 0 || !ledgerEnabled || slots <= 0 || d.topic.empty()) {
+                return;
             }
+            // The slot goes in this lens's own ring, sized by that lens's count —
+            // 0 there means the global one. A lens only ever displaces its own
+            // subjects, so a lens that cycles fast cannot quietly release what
+            // another one settled.
+            PendingImpulses::LedgerRecord(d.speakerFormID, d.speakerName, d.topic, d.lens,
+                                          static_cast<std::size_t>(std::max(d.lensLedgerSlots, 0)));
+            logger::info("Ledger: {} is carrying '{}' under the {} lens — held until we know whether anyone met it",
+                         d.speakerName, OneLine(d.topic), d.lens.empty() ? "unnamed" : d.lens);
         }
 
-        // Writes the finished impulse into SkyrimNet. Main thread — the Papyrus
-        // VM is not thread-safe.
-        void DeliverImpulse(ImpulseDelivery d)
+        // Sets or coalesces this companion's pending cue. Main thread, called
+        // straight after the store write.
+        void SetOrCoalesceCue(const ImpulseDelivery& d)
+        {
+            {
+                std::scoped_lock lock{ g_cueLock };
+                const auto it = std::ranges::find_if(
+                    g_cues, [&](const PendingCue& cue) { return cue.formID == d.speakerFormID; });
+                if (it != g_cues.end()) {
+                    it->carries += 1;
+                    // The newest carry decides who she turns to; the clock does
+                    // not move, so a companion picking something up every few
+                    // minutes cannot hold one cue open all evening.
+                    it->targetName = d.targetName;
+                    it->targetUuid = d.targetUuid;
+                    logger::info("{} already has a cue waiting — that is {} things on her mind behind one sentence",
+                                 d.speakerName, it->carries);
+                    return;
+                }
+
+                PendingCue cue;
+                cue.formID = d.speakerFormID;
+                cue.speakerName = d.speakerName;
+                cue.targetName = d.targetName;
+                cue.speakerUuid = d.speakerUuid;
+                cue.targetUuid = d.targetUuid;
+                cue.setAtMs = NowMs();
+                cue.setGameDays = d.gameDays;
+                cue.carries = 1;
+                g_cues.push_back(std::move(cue));
+            }
+            WithState([](Status& state) { state.deliveryPending = true; });
+        }
+
+        // Carries the finished impulse, then announces it. Main thread — the
+        // Papyrus VM is not thread-safe, and the thought path needs a live actor.
+        //
+        // The order is the design. The store write lands first, so that by the
+        // time any narration goes out her bio already says what she is carrying;
+        // the other way round grants her a speaking turn before there is an
+        // agenda to speak from, and she fills it with nothing.
+        void CarryImpulse(ImpulseDelivery d)
         {
             const auto settings = SnapshotSettings();
 
-            bool ok = false;
+            bool        ok = false;
             std::string how;
 
-            // Direct narration is what actually gets the companion talking, and
-            // it needs a UUID to speak as. Without one there is nobody to hand
-            // the stage direction to, so it degrades to an event the party
-            // merely knows about.
-            if (d.delivery == kDirectNarration && d.speakerUuid != 0) {
-                how = "direct narration";
-                ok = PapyrusBridge::DirectNarration(d.content, d.speakerUuid, d.targetUuid);
-
-                // She has just opened her mouth unprompted. The subject does not
-                // stop existing here — it stops being *unsaid*. Whatever she was
-                // carrying is superseded by what she actually said (Set replaces
-                // per actor), now marked spoken, and the topic takes a
-                // provisional ledger slot so the next ask does not propose it
-                // straight back.
-                if (ok) {
-                    RecordSpokenImpulse(d, settings.ledgerSlots, settings.ledgerEnabled);
-                }
-            } else if (settings.pendingBioInjection) {
-                how = "recorded impulse";
+            if (settings.pendingBioInjection) {
                 ok = RecordAsPendingImpulse(d);
+                how = "carried in her bio";
+                if (ok) {
+                    RecordLedgerSlot(d, settings.ledgerSlots, settings.ledgerEnabled);
+                }
                 if (ok && settings.generateThought) {
                     // Two different things about one impulse: the pending entry
-                    // is the agenda, in her words-to-be; this is what carrying
-                    // it feels like. RecordAsThought's hint is already framed as
-                    // unsaid, which is exactly right here.
-                    how = "recorded impulse + thought";
+                    // is the agenda, in her words-to-be; this is what carrying it
+                    // feels like.
+                    how += " + thought";
                     RecordAsThought(d);
                 }
             } else {
+                // The A/B against carrying: SkyrimNet generates a thought from
+                // the impulse instead of the DLL holding the text. Nothing is in
+                // her bio afterwards, so there is nothing for a cue to be about
+                // and none is set.
                 how = "generated thought";
                 ok = RecordAsThought(d);
             }
 
+            // The cue, once the impulse is genuinely in her bio and there is
+            // somebody for SkyrimNet to give a turn to. Without a UUID she cannot
+            // be handed one, which costs the announcement and nothing else — the
+            // impulse is carried either way, and drift is the fallback rather
+            // than a degrade path.
+            if (ok && settings.pendingBioInjection) {
+                if (!settings.cues) {
+                    logger::debug("Cues are off — {} carries it, and it surfaces as it colours what she says",
+                                  d.speakerName);
+                } else if (d.speakerUuid == 0) {
+                    logger::warn("SkyrimNet has no UUID for {}, so she cannot be given a speaking turn — the impulse "
+                                 "stays in her bio and surfaces from there",
+                                 d.speakerName);
+                } else {
+                    SetOrCoalesceCue(d);
+                    how += " + cue";
+                }
+            }
+
+            // Logged after the cue rather than before it, so the one line names
+            // everything that happened to this impulse — including whether an
+            // announcement is now waiting on a lull.
             if (ok) {
-                logger::info("{} raises something with {} — delivered as a {} at game time {}: {}", d.speakerName,
+                logger::info("{} picks something up to raise with {} — {} at game time {}: {}", d.speakerName,
                              d.targetName, how, FormatGameTime(d.gameDays), d.content);
                 // The impulse's own citation, straight from the model. An empty
                 // one is not an error — an older prompt file simply doesn't ask
@@ -625,18 +662,6 @@ namespace AgencyEngine::Director
                               how, d.speakerName, d.targetName, FormatGameTime(d.gameDays), d.content);
             }
 
-            // Only on the spoken path, and only when it actually reached
-            // SkyrimNet. SeedThought's hint says "you have just decided to bring
-            // this up" — true after a speaking turn and false after every other
-            // delivery here, each of which has already arranged its own private
-            // half above. Seeding on top of those would be two LLM calls
-            // producing two thoughts about one impulse, the second of them
-            // claiming she said something she never said.
-            const bool spokenAloud = (how == "direct narration");
-            if (ok && spokenAloud && d.generateThought) {
-                SeedThought(d);
-            }
-
             Impulse impulse;
             impulse.when = FormatGameTime(d.gameDays);
             impulse.content = std::move(d.content);
@@ -647,61 +672,6 @@ namespace AgencyEngine::Director
             impulse.lens = std::move(d.lens);
             impulse.ok = ok;
             RecordImpulse(std::move(impulse), true);
-        }
-
-        // Where the conversation check actually belongs. Main thread.
-        //
-        // Checking before dispatch would protect nothing: the LLM round trip
-        // runs 4-8 seconds, so the party's state at request time says nothing
-        // about their state when the answer lands. Delivery is instantaneous,
-        // so this is the only point where "are they talking right now" and
-        // "are we about to interrupt them" are the same question.
-        void DeliverOrHold(ImpulseDelivery d)
-        {
-            const auto settings = SnapshotSettings();
-
-            // A persistent event is never voiced, so it interrupts nothing and
-            // has no reason to wait.
-            if (d.delivery != kDirectNarration) {
-                DeliverImpulse(std::move(d));
-                return;
-            }
-
-            QuietReading reading;
-            WithState([&](Status& state) { reading = state.quiet; });
-            const bool suspended = IsSuspended();
-
-            // The dispatch gate cleared several seconds ago; a menu opened or
-            // the window went to the background in the meantime. Speaking now
-            // spends the line on an empty room, and the player hears it the
-            // instant they come back. This holds regardless of
-            // deferOnConversation — that setting is about talking over people,
-            // this is about talking to nobody.
-            const bool waiting = suspended || WithinResumeSettle();
-
-            if (!waiting && (!settings.deferOnConversation || IsQuiet(settings, reading))) {
-                DeliverImpulse(std::move(d));
-                return;
-            }
-
-            if (waiting) {
-                logger::info("{} has something to raise with {}, but the game is {} — holding it until the player "
-                             "is back",
-                             d.speakerName, d.targetName, suspended ? "paused or in the background" : "just back");
-            } else {
-                logger::info(
-                    "{} has something to raise with {}, but the party is talking — holding it (up to {:.0f}s). "
-                    "Reading: {}, threshold {:.0f}s",
-                    d.speakerName, d.targetName, settings.maxDeferSeconds, DescribeReading(reading),
-                    settings.quietSeconds);
-            }
-
-            {
-                std::scoped_lock lock{ g_pendingLock };
-                g_pending = std::move(d);
-                g_pendingSinceMs = NowMs();
-            }
-            WithState([](Status& state) { state.deliveryPending = true; });
         }
 
         // ---- director thread ---------------------------------------------
@@ -1152,7 +1122,6 @@ namespace AgencyEngine::Director
                 roster.push_back({ follower.name, SkyrimNetAPI::FormIDToUUID(follower.formID), follower.formID });
             }
 
-            const auto delivery = settings.delivery;
             const auto gameDays = snap.gameDays;
 
             StampAsk(lens, gameDays);
@@ -1164,11 +1133,10 @@ namespace AgencyEngine::Director
             // The LLM variant stays the same across lenses on purpose: they are
             // the same job at the same cost, and one variant means one place in
             // SkyrimNet's UI to point impulses at a cheaper model.
-            logger::info("Asking the {} question — prompt '{}' (variant '{}'), context {} bytes, {} follower(s), "
-                         "delivery '{}'. Next {} ask in {:.0f} in-game minutes, or {:.0f} if this one carries",
+            logger::info("Asking the {} question — prompt '{}' (variant '{}'), context {} bytes, {} follower(s). "
+                         "Next {} ask in {:.0f} in-game minutes, or {:.0f} if this one carries",
                          lens.name.empty() ? "unnamed" : lens.name, lens.prompt, kLLMVariant, contextJson.size(),
-                         roster.size(), delivery == kDirectNarration ? "direct-narration" : "persistent-event",
-                         lens.name.empty() ? "unnamed" : lens.name, lens.intervalGameMinutes,
+                         roster.size(), lens.name.empty() ? "unnamed" : lens.name, lens.intervalGameMinutes,
                          lens.intervalGameMinutes + lens.cooldownGameMinutes);
 
             if (player.uuid == 0) {
@@ -1188,7 +1156,7 @@ namespace AgencyEngine::Director
                 lens.prompt, kLLMVariant, contextJson,
                 // Runs on a SkyrimNet worker thread. Nothing here touches the
                 // game — the delivery hop is posted to the main thread.
-                [delivery, gameDays, dispatchedAt, player = std::move(player), roster = std::move(roster),
+                [gameDays, dispatchedAt, player = std::move(player), roster = std::move(roster),
                  generateThought = settings.generateThought, lensKey = lens.key, lensName = lens.name,
                  proposal = lens.proposal, lensLedgerSlots = lens.ledgerSlots,
                  interval = lens.intervalGameMinutes, cooldown = lens.cooldownGameMinutes,
@@ -1286,9 +1254,9 @@ namespace AgencyEngine::Director
                         }
                     }
 
-                    if (delivery == kDirectNarration && speaker->uuid == 0) {
+                    if (speaker->uuid == 0) {
                         logger::warn("SkyrimNet has no UUID for {} — they cannot be given a speaking turn, so this "
-                                     "lands as a persistent event instead",
+                                     "impulse will be carried in their bio without a cue to announce it",
                                      speaker->name);
                     }
 
@@ -1345,7 +1313,6 @@ namespace AgencyEngine::Director
                     outgoing.speakerUuid = speaker->uuid;
                     outgoing.targetUuid = target->uuid;
                     outgoing.speakerFormID = speaker->formID;
-                    outgoing.delivery = delivery;
                     outgoing.generateThought = generateThought;
                     outgoing.gameDays = gameDays;
                     outgoing.lens = lensName;
@@ -1354,16 +1321,16 @@ namespace AgencyEngine::Director
 
                     // The ask produced something to carry, so this lens goes
                     // quiet for the cooldown as well as the interval. Stamped
-                    // here rather than at delivery: delivery can be held for a
-                    // conversation, and a lens that stayed askable in the
-                    // meantime could produce a second impulse about the same
-                    // day for the same companion.
+                    // here rather than after the carry lands: the carry hops to
+                    // the main thread, and a lens that stayed askable across that
+                    // gap could produce a second impulse about the same day for
+                    // the same companion.
                     logger::info("The {} lens carried something, so it goes quiet for {:.0f} in-game minutes",
                                  lensName.empty() ? "unnamed" : lensName, interval + cooldown);
                     release(true);
 
                     SKSE::GetTaskInterface()->AddTask(
-                        [outgoing = std::move(outgoing)]() mutable { DeliverOrHold(std::move(outgoing)); });
+                        [outgoing = std::move(outgoing)]() mutable { CarryImpulse(std::move(outgoing)); });
                 });
 
             if (!queued) {
@@ -1617,13 +1584,47 @@ namespace AgencyEngine::Director
             }
         }
 
-        // Delivers a held impulse the moment the party goes quiet, or gives up
+        // Did anybody talk between the cue being set and now?
+        //
+        // The two clocks are read against the cue's own age, so this asks
+        // exactly the question the resolve gate needs: was there an exchange
+        // inside the window, not is there one now. The dialogue clock is the
+        // load-bearing one — it sees the player's half, which makes no audio at
+        // all — and the audio clock catches an NPC line that produced no
+        // dialogue event.
+        bool ConversationSinceCue(const PendingCue& cue, const QuietReading& reading)
+        {
+            const auto windowMs = NowMs() - cue.setAtMs;
+            const auto sinceDialogue = SkyrimNetAPI::MsSinceLastDialogue();
+            if (sinceDialogue >= 0 && sinceDialogue < windowMs) {
+                return true;
+            }
+            // 0 is documented as "no audio has played yet", not "just now".
+            return reading.valid && reading.msSinceAudioEnded > 0 && reading.msSinceAudioEnded < windowMs;
+        }
+
+        // The vague sentence itself. It names the companion and nothing else:
+        // her bio carries the subject, and a cue that named one would be false
+        // the moment a second carry coalesced into it.
+        //
+        // Third person, present tense, and no quoted speech — it is a stage
+        // direction for SkyrimNet to write a line from, exactly like the impulse
+        // text, and the same rules apply to it.
+        std::string CueText(const PendingCue& cue)
+        {
+            return std::format("{} has something on their mind that they have been meaning to bring up, and the "
+                               "quiet has given them the opening to start it.",
+                               cue.speakerName);
+        }
+
+        // Fires a companion's cue the moment the party goes quiet, or gives up
         // on it. Director thread.
+        //
         // Called on every pass, including the ones where the world is not
         // readable — that is the whole point. This is the only thing in the
         // file whose clock has to keep being *stopped* while the game is
         // suspended, and it cannot do that from behind a freshness guard.
-        void PumpPendingDelivery(const Settings& settings, bool suspended)
+        void PumpPendingCues(const Settings& settings, bool suspended)
         {
             static std::int64_t lastPumpMs = 0;
 
@@ -1631,91 +1632,155 @@ namespace AgencyEngine::Director
             const auto sinceLastPump = lastPumpMs == 0 ? 0 : now - lastPumpMs;
             lastPumpMs = now;
 
-            std::int64_t heldMs = 0;
+            struct Firing
             {
-                std::scoped_lock lock{ g_pendingLock };
-                if (!g_pending) {
+                PendingCue cue;
+                std::int64_t heldMs = 0;
+            };
+            std::vector<Firing>                               firing;
+            std::vector<std::pair<std::uint32_t, std::string>> resolveFirst;
+            double                                            oldestHeldSeconds = 0.0;
+            std::size_t                                       stillWaiting = 0;
+
+            {
+                // Nothing waiting is the ordinary state of this function, and
+                // it should cost one uncontended lock rather than a copy of
+                // every carried impulse in the party. The pump clock above is
+                // already stamped, so a long quiet spell cannot make the next
+                // suspended cue jump.
+                std::scoped_lock lock{ g_cueLock };
+                if (g_cues.empty()) {
                     return;
                 }
-                // The defer clock is real time, and being suspended does not
-                // stop real time. Left alone, a two-minute alt-tab exhausts
-                // maxDeferSeconds against a party that was never talking, and
-                // the impulse is downgraded (or dropped) for a conversation
-                // that never happened. Push the start forward instead, so
-                // suspended time is not held time.
-                if (suspended) {
-                    g_pendingSinceMs += sinceLastPump;
-                }
-                heldMs = now - g_pendingSinceMs;
             }
 
-            WithState([&](Status& state) {
-                state.deliveryHeldSeconds = static_cast<double>(heldMs) / 1000.0;
-            });
-
-            // Nobody is there to hear it, or they have only just sat back down.
-            // The quiet reading is not consulted at all here: after a suspend it
-            // describes a room that was frozen, not one that fell silent.
-            if (suspended || WithinResumeSettle()) {
-                return;
-            }
-
+            // Everything the entries decide is read once, outside the cue lock:
+            // PendingImpulses has its own, and taking the two together in one
+            // order here and another order somewhere else is the deadlock nobody
+            // finds until it happens.
+            const auto entries = PendingImpulses::Snapshot();
             QuietReading reading;
             WithState([&](Status& state) { reading = state.quiet; });
-
-            // With conversation deferral off, the party's state is not a reason
-            // to wait — the only thing that put this in the queue was the game
-            // being suspended, and it no longer is.
             const bool quiet = !settings.deferOnConversation || IsQuiet(settings, reading);
-            const bool expired = heldMs >= static_cast<std::int64_t>(settings.maxDeferSeconds * 1000.0f);
-            if (!quiet && !expired) {
-                return;
+            const bool waiting = suspended || WithinResumeSettle();
+
+            {
+                std::scoped_lock lock{ g_cueLock };
+                for (auto it = g_cues.begin(); it != g_cues.end();) {
+                    // The defer clock is real time, and being suspended does not
+                    // stop real time. Left alone, a two-minute alt-tab exhausts
+                    // maxDeferSeconds against a party that was never talking, and
+                    // the cue is dropped for a conversation that never happened.
+                    // Push the start forward instead, so suspended time is not
+                    // held time.
+                    if (suspended) {
+                        it->setAtMs += sinceLastPump;
+                    }
+                    const auto heldMs = now - it->setAtMs;
+                    oldestHeldSeconds = std::max(oldestHeldSeconds, static_cast<double>(heldMs) / 1000.0);
+
+                    // Nobody is there to hear it, or they have only just sat back
+                    // down. The quiet reading is not consulted at all in that
+                    // state: after a suspend it describes a room that was frozen,
+                    // not one that fell silent.
+                    if (waiting) {
+                        ++it;
+                        continue;
+                    }
+
+                    if (heldMs >= static_cast<std::int64_t>(settings.maxDeferSeconds * 1000.0f)) {
+                        // Dropped, and that is the end of it. What she is
+                        // carrying is already in her bio, so the subject goes on
+                        // colouring what she says — losing the cue costs the
+                        // opening, not the impulse.
+                        logger::info("{}'s cue never found a gap in {:.0f}s — dropping it. She is still carrying "
+                                     "what it was for, and it colours what she says next.",
+                                     it->speakerName, heldMs / 1000.0);
+                        it = g_cues.erase(it);
+                        continue;
+                    }
+
+                    if (!quiet) {
+                        ++it;
+                        continue;
+                    }
+
+                    // The party is quiet, so the cue can go out — unless
+                    // somebody talked while it was waiting, in which case what
+                    // she is carrying may have been dealt with in that very
+                    // exchange, and announcing it would have her raise a subject
+                    // the party just closed.
+                    if (ConversationSinceCue(*it, reading)) {
+                        std::vector<std::pair<std::uint32_t, std::string>> unchecked;
+                        bool anyLeft = false;
+                        for (const auto& entry : entries) {
+                            if (entry.formID != it->formID || entry.unverified) {
+                                continue;
+                            }
+                            anyLeft = true;
+                            if (entry.lastCheckGameDays < it->setGameDays) {
+                                unchecked.emplace_back(entry.formID, entry.lens);
+                            }
+                        }
+
+                        if (!anyLeft) {
+                            logger::info("Everything {} was carrying was met while her cue waited — dropping it "
+                                         "rather than announcing a subject the party just closed",
+                                         it->speakerName);
+                            it = g_cues.erase(it);
+                            continue;
+                        }
+                        if (!unchecked.empty()) {
+                            // Queued rather than run here: checks go one at a
+                            // time through the Director's own queue, so the cue
+                            // waits across passes instead of blocking one. The
+                            // flag stops the queue being refilled every pass
+                            // while they run.
+                            if (!it->resolveRequested) {
+                                it->resolveRequested = true;
+                                resolveFirst.insert(resolveFirst.end(), unchecked.begin(), unchecked.end());
+                                logger::info("The party talked while {}'s cue waited — checking her {} carried "
+                                             "impulse(s) before announcing anything",
+                                             it->speakerName, unchecked.size());
+                            }
+                            ++it;
+                            continue;
+                        }
+                        // Everything has been asked about since the cue was set,
+                        // and something survived: the gate is satisfied.
+                    }
+
+                    firing.push_back(Firing{ *it, heldMs });
+                    it = g_cues.erase(it);
+                }
+                stillWaiting = g_cues.size();
             }
 
-            ImpulseDelivery outgoing;
-            {
-                std::scoped_lock lock{ g_pendingLock };
-                if (!g_pending) {
-                    return;
-                }
-                outgoing = std::move(*g_pending);
-                g_pending.reset();
+            for (const auto& [formID, lens] : resolveFirst) {
+                RequestResolveCheck(formID, lens);
             }
-            WithState([](Status& state) {
-                state.deliveryPending = false;
-                state.deliveryHeldSeconds = 0.0;
+
+            // The UI's one line about waiting: how long the oldest cue has been
+            // held, and whether any is still held at all.
+            WithState([&](Status& state) {
+                state.deliveryPending = stillWaiting > 0;
+                state.deliveryHeldSeconds = stillWaiting > 0 ? oldestHeldSeconds : 0.0;
             });
 
-            if (quiet) {
-                logger::info("The party went quiet after {:.0f}s — {} raises it now. Reading: {}", heldMs / 1000.0,
-                             outgoing.speakerName, DescribeReading(reading));
-            } else if (settings.degradeToPersistentEvent) {
-                // The impulse was written against state that is now up to a
-                // minute old, and the conversation has moved on. Recording it
-                // instead of speaking it is the graceful failure: she does not
-                // interrupt, the topic lands in her context, and it colours
-                // whatever she says next through SkyrimNet's own loop.
-                logger::info("Still talking after {:.0f}s — recording {}'s impulse as a persistent event instead of "
-                             "interrupting",
-                             heldMs / 1000.0, outgoing.speakerName);
-                outgoing.delivery = kPersistentEvent;
-            } else {
-                logger::info("Still talking after {:.0f}s — dropping {}'s impulse", heldMs / 1000.0,
-                             outgoing.speakerName);
-                Impulse dropped;
-                dropped.when = FormatGameTime(outgoing.gameDays);
-                dropped.content = outgoing.content;
-                dropped.speaker = outgoing.speakerName;
-                dropped.target = outgoing.targetName;
-                dropped.delivery = "dropped (the party never stopped talking)";
-                dropped.lens = outgoing.lens;
-                dropped.ok = true;
-                RecordImpulse(std::move(dropped), false);
-                return;
-            }
-
-            if (auto* tasks = SKSE::GetTaskInterface()) {
-                tasks->AddTask([outgoing = std::move(outgoing)]() mutable { DeliverImpulse(std::move(outgoing)); });
+            for (auto& pending : firing) {
+                logger::info("The party went quiet after {:.0f}s — cueing {}, who is carrying {} thing(s). "
+                             "Reading: {}",
+                             pending.heldMs / 1000.0, pending.cue.speakerName, pending.cue.carries,
+                             DescribeReading(reading));
+                if (auto* tasks = SKSE::GetTaskInterface()) {
+                    tasks->AddTask([cue = pending.cue]() {
+                        if (!PapyrusBridge::DirectNarration(CueText(cue), cue.speakerUuid, cue.targetUuid)) {
+                            logger::error("The cue for {} failed to reach SkyrimNet — she keeps carrying it, and it "
+                                          "colours what she says next",
+                                          cue.speakerName);
+                        }
+                    });
+                }
             }
         }
 
@@ -2011,7 +2076,7 @@ namespace AgencyEngine::Director
                 // the game is suspended this is the only thing that runs, and
                 // stopping the defer clock is exactly what it is here to do.
                 if (available) {
-                    PumpPendingDelivery(settings, suspended);
+                    PumpPendingCues(settings, suspended);
                 }
 
                 // Ahead of the impulse gates, and not subject to them: holding
@@ -2185,6 +2250,13 @@ namespace AgencyEngine::Director
             std::scoped_lock lock{ g_resolveRequestLock };
             g_resolveRequests.clear();
         }
+        {
+            // The same for cues, and they are ephemeral by design: a cue lost to
+            // a load costs one announcement, and whatever it was announcing is
+            // still in her bio in the save that carries it.
+            std::scoped_lock lock{ g_cueLock };
+            g_cues.clear();
+        }
         WithState([](Status& state) {
             state.pendingImpulses.clear();
             // Every clock belongs to the save we just left, and game time in the
@@ -2192,6 +2264,8 @@ namespace AgencyEngine::Director
             // past the gates, so nothing asks the instant a save comes up.
             state.lensClocks.clear();
             state.inFlight = false;
+            state.deliveryPending = false;
+            state.deliveryHeldSeconds = 0.0;
             state.snapshot = {};
             // continuousOwned is deliberately NOT cleared here: the Director
             // needs it on its next pass to know whether it still owes SkyrimNet

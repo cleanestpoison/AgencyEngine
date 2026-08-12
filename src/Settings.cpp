@@ -241,6 +241,12 @@ namespace AgencyEngine
                 { "intervalGameMinutes",
                   "there is no shared impulse interval any more — each lens asks on its own interval and "
                   "cooldown, on the Lenses tab" },
+                { "delivery",
+                  "an impulse is always carried in her bio now, and the only narration left is the cue, which "
+                  "the 'Announce a fresh impulse with a cue' switch owns" },
+                { "degradeToPersistentEvent",
+                  "a cue that runs out of time is simply dropped — the impulse reached her bio before the cue "
+                  "was set, so it colours what she says either way" },
             };
             for (const auto& [key, what] : kObsolete) {
                 if (j.contains(key)) {
@@ -292,18 +298,17 @@ namespace AgencyEngine
     std::string Settings::Summary() const
     {
         return std::format(
-            "enabled={} delivery={} generateThought={} requireFollower={} "
+            "enabled={} cues={} generateThought={} requireFollower={} "
             "skipInCombat={} playerEvents={} perFollowerEvents={} forcedImpulseChance={}% eventFilter='{}' "
             "lenses=[{}] "
-            "deferOnConversation={} quiet={:.0f}s maxDefer={:.0f}s onExpiry={} injectQuietGap={} poll={:.1f}s "
+            "deferOnConversation={} quiet={:.0f}s maxDefer={:.0f}s injectQuietGap={} poll={:.1f}s "
             "verboseLog={} combatContinuousMode={} continuousExitGrace={:.0f}s pendingBioInjection={} "
             "pendingTtl={:.0f} in-game min pendingResolve={:.0f} in-game min "
             "followerEventFilter='{}' ledger={} slots={} veto={}",
-            enabled, delivery == kDirectNarration ? "direct-narration" : "persistent-event", generateThought,
+            enabled, cues, generateThought,
             requireFollower, skipInCombat, maxEvents, perFollowerEvents, forcedImpulseChance, eventTypeFilter,
             LensSummary(),
-            deferOnConversation, quietSeconds, maxDeferSeconds,
-            degradeToPersistentEvent ? "persistent-event" : "drop", injectQuietGap, quietPollSeconds, debugLog,
+            deferOnConversation, quietSeconds, maxDeferSeconds, injectQuietGap, quietPollSeconds, debugLog,
             combatContinuousMode, continuousExitGraceSeconds, pendingBioInjection, pendingTtlGameMinutes,
             pendingResolveGameMinutes, followerEventTypeFilter, ledgerEnabled, ledgerSlots, ledgerVeto);
     }
@@ -334,7 +339,7 @@ namespace AgencyEngine
 
             enabled = j.value("enabled", enabled);
             maxEvents = j.value("maxEvents", maxEvents);
-            delivery = j.value("delivery", delivery);
+            cues = j.value("cues", cues);
             generateThought = j.value("generateThought", generateThought);
             requireFollower = j.value("requireFollower", requireFollower);
             skipInCombat = j.value("skipInCombat", skipInCombat);
@@ -349,7 +354,6 @@ namespace AgencyEngine
             deferOnConversation = j.value("deferOnConversation", deferOnConversation);
             quietSeconds = j.value("quietSeconds", quietSeconds);
             maxDeferSeconds = j.value("maxDeferSeconds", maxDeferSeconds);
-            degradeToPersistentEvent = j.value("degradeToPersistentEvent", degradeToPersistentEvent);
             injectQuietGap = j.value("injectQuietGap", injectQuietGap);
             quietPollSeconds = j.value("quietPollSeconds", quietPollSeconds);
             pendingBioInjection = j.value("pendingBioInjection", pendingBioInjection);
@@ -417,7 +421,7 @@ namespace AgencyEngine
 
             put("enabled", enabled, shipped.enabled);
             put("maxEvents", maxEvents, shipped.maxEvents);
-            put("delivery", delivery, shipped.delivery);
+            put("cues", cues, shipped.cues);
             put("generateThought", generateThought, shipped.generateThought);
             put("requireFollower", requireFollower, shipped.requireFollower);
             put("skipInCombat", skipInCombat, shipped.skipInCombat);
@@ -429,7 +433,6 @@ namespace AgencyEngine
             put("deferOnConversation", deferOnConversation, shipped.deferOnConversation);
             put("quietSeconds", quietSeconds, shipped.quietSeconds);
             put("maxDeferSeconds", maxDeferSeconds, shipped.maxDeferSeconds);
-            put("degradeToPersistentEvent", degradeToPersistentEvent, shipped.degradeToPersistentEvent);
             put("injectQuietGap", injectQuietGap, shipped.injectQuietGap);
             put("quietPollSeconds", quietPollSeconds, shipped.quietPollSeconds);
             put("pendingBioInjection", pendingBioInjection, shipped.pendingBioInjection);

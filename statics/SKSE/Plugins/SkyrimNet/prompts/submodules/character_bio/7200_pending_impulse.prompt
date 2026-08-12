@@ -28,12 +28,18 @@
    carried subjects come out as one overloaded speech rather than as one thing
    at a time. (Recorded as an open validation in docs/adr/0004.)
 
-   The two wordings are not interchangeable, and she can need both at once. An
-   entry survives a speaking turn — the loop stopped deleting it at dispatch,
-   because "she said it" and "it got anywhere" are different questions.
+   The two wordings are not interchangeable, and she can need both at once.
    Rendering the carried wording over something she has said would tell her she
    has not said a thing she just said, on every dialogue call, and she would say
    it again immediately.
+
+   NOTHING ENTERS THE SPOKEN STATE IN THIS VERSION. Delivery is a cue now — a
+   vague line granting her a speaking turn without naming which of the subjects
+   she is carrying she will take up — so the mod cannot attribute a raise to one
+   entry. What it does instead is ask: when the party has talked, the resolution
+   check runs before the next cue, and a subject somebody met is cleared. The
+   spoken block below is kept for entries restored from the version before the
+   cue, which can still be in that state.
 
    ---------------------------------------------------------------------------
    THE render_mode GUARD IS LOAD-BEARING. DO NOT DROP IT.

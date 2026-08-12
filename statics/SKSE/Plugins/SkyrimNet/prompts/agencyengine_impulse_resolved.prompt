@@ -3,13 +3,19 @@
 
    Is the subject a companion is carrying still live, or is it done?
 
-   Two cases, and they are not the same question. When spoken is false they
-   have never said it, so "done" means the talk covered it without them. When
-   spoken is true the loop already gave them the turn — their raise is the
-   premise, not evidence, and "done" means somebody engaged with what they
-   said. Counting their own raise as resolution would mark every beat done the
-   moment they open their mouth, which hides the one thing the mod is meant to
-   notice.
+   Two cases, and they are not the same question. When spoken is false the mod
+   does not know whether they have said it: delivery is a *cue* now — a vague
+   line that hands them a speaking turn without naming which of the subjects
+   they are carrying they will take up — so the honest question is whether the
+   subject has been dealt with at all, by them or by anyone. When spoken is true
+   the loop is certain they were given the turn on this specific subject; their
+   raise is the premise, not evidence, and "done" means somebody engaged with
+   what they said. Counting their own raise as resolution would mark every beat
+   done the moment they open their mouth, which hides the one thing the mod is
+   meant to notice.
+
+   Nothing enters the spoken state in this version. Entries written by the
+   version before the cue can be in it, and they keep their own question.
 
    `proposal` splits the spoken case again. A *topic* is met by an answer of any
    kind — agreeing, refusing, arguing it out. A *proposal* ("come drink", "spar
@@ -46,11 +52,11 @@ they got. Judge whether the thing they asked for actually happened, or was plain
 {{ npc_name }} raised this with {{ target_name }} at {{ marked_at }}. That they said it is given. Judge whether
 anyone met it.
 {% else if proposal %}
-{{ npc_name }} has been meaning to ask {{ target_name }} for this and has not asked. Judge whether it happened
-anyway, or stopped being possible.
+{{ npc_name }} has been carrying this as something to ask {{ target_name }} for. Judge whether it happened — whoever
+asked — or stopped being possible.
 {% else %}
-{{ npc_name }} has been meaning to raise this with {{ target_name }} and has not said it. Judge whether it has been
-dealt with anyway.
+{{ npc_name }} has been carrying this as something to raise with {{ target_name }}. Judge whether it has been dealt
+with, by them or by anyone else.
 {% endif %}
 
 > {{ impulse }}
@@ -81,16 +87,18 @@ A refusal counts: {{ npc_name }} does not have to have got what they wanted, onl
 **resolved: false** when it went past — changed subject, walked off, silence, or a deferral like "sure" or "later".
 Deferral is not an answer.
 {% else if proposal %}
-**resolved: true** when the thing happened anyway — somebody else asked for it and it was done, or the events show
-them doing it — or when it stopped being possible.
+**resolved: true** when the thing happened — {{ npc_name }} asked and it was done, somebody else asked and it was
+done, or the events show them doing it — or when it was plainly refused, or stopped being possible.
 
-**resolved: false** when nothing in the events shows it taking place, including when something adjacent to it did.
+**resolved: false** when nothing in the events shows it taking place, including when something adjacent to it did,
+and including when it was agreed to and left there. Deferral is not an answer.
 {% else %}
-**resolved: true** when it reached the table without them — someone else raised it, or events settled it, so raising
-it now would repeat what already happened.
+**resolved: true** when it reached the table and was met — {{ npc_name }} raised it and someone answered, someone
+else raised it, or events settled it — so raising it now would repeat what already happened.
 
 **resolved: false** when nothing touched it, when only an adjacent subject came up, or when it was mentioned and
-dropped without being addressed.
+dropped without being addressed. That includes {{ npc_name }} bringing it up and getting nothing back: an unanswered
+subject is still owed.
 {% endif %}
 
 Also false when you cannot tell. false is recoverable; true buries the subject.

@@ -46,7 +46,7 @@
    Raise this if the log shows nothing but quiet asks; lower it if the
    companions start sounding like they are on a schedule. It applies to every
    lens and is rolled per ask, so several lenses coming due together roll it
-   several times; the per-lens spoken/quiet counters on the Lenses tab are how
+   several times; the per-lens carried/quiet counters on the Lenses tab are how
    you tell whether one lens in particular is running dry.
 
    The roll is suppressed outright while the party is mid-exchange

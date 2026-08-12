@@ -41,7 +41,20 @@ _Avoid_: timeout, backoff, suppression window
 **Stage direction**:
 The 2–4 sentence, third-person, present-tense text an impulse carries. It names a topic, a why-now,
 and an opening. It never contains the companion's words or their conclusion — they write the line.
+It is the **carried payload**, rendered into her own bio; it is not narrated at her, and no narration
+ever contains it.
 _Avoid_: narration text, dialogue, script
+
+**Cue**:
+The vague direct narration that announces a fresh carry — she has something on her mind — granting the
+speaking turn and naming no subject, because the bio supplies the material. One per companion,
+coalescing across however many carries; it waits for a lull, and expiring simply drops it.
+_Avoid_: announcement, nudge, prompt
+
+**Drift**:
+A carried impulse colouring what she says next through her bio, with no turn granted. What happens with
+cues switched off, and what a dropped cue falls back to. The built-in fallback, not a degrade path.
+_Avoid_: leakage, bleed, passive delivery
 
 **Forced turn**:
 An ask on which the silence option is removed from the prompt and someone must speak. A percentage
@@ -113,8 +126,11 @@ private.
 _Avoid_: memory, thought, note
 
 **Carried / Spoken**:
-The two states of a pending impulse. *Carried* means she has not said it; *spoken* means the loop gave
-her the turn and she did. They are different questions and the resolution check asks each differently.
+The two states of a pending impulse. *Carried* means she has not said it. *Spoken* meant the loop gave
+her the turn on that particular subject and she took it — which the loop can no longer observe, because
+a **cue** grants a turn without naming which of the things she is carrying she will raise. Nothing
+enters the spoken state now; entries restored from before the cue can be in it, and the resolution
+check still asks them their own question. The **resolution** check is what decides a carried impulse.
 _Avoid_: pending/delivered, open/closed
 
 **Resolution**:
@@ -123,8 +139,10 @@ and the default when unclear; `true` buries the subject.
 _Avoid_: completion, closure, expiry
 
 **Ledger**:
-Per-companion record of subjects already raised, rendered into the prompt as a closed door. Eviction is
-by count, not by clock — a quiet in-game week must not make a settled grievance raisable again.
+Per-companion record of subjects already taken up, rendered into the prompt as a closed door. A slot is
+written at **carry** — the loop cannot see which subject she voiced, so carry is the event it owns —
+and stays provisional until **resolution** confirms or withdraws it. Eviction is by count, not by
+clock: a quiet in-game week must not make a settled grievance raisable again.
 _Avoid_: history, cooldown, blacklist
 
 **Beat**:
@@ -149,7 +167,8 @@ _Avoid_: relationship score, rapport, affinity
 - A companion holds at most one **Pending impulse** per **Lens**, and may hold one from each at once
 - **Resolution** decides one **Pending impulse** at a time, and the question it asks depends on Topic vs
   Proposal
-- A resolved **Pending impulse** confirms a **Ledger** slot; an unresolved one withdraws it
+- A **Carried** impulse takes a provisional **Ledger** slot at once; **Resolution** confirms it, and
+  every other way it can die withdraws it
 - Each **Lens** evicts only within its own **Ledger** ring, so lenses cannot bury each other's subjects
 - **Standing** supplies the subject for the **Relationship lens** and the licence for the **Activity lens**
 

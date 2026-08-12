@@ -5,9 +5,9 @@ An SKSE plugin for [SkyrimNet](https://www.nexusmods.com/skyrimspecialedition/mo
 They never stop in the middle of an ordinary afternoon to say *I want to go home*, or *we've been putting this off*,
 or *there's something I haven't told you*. This plugin is the part of them that does.
 
-On a configurable **in-game** interval it reads what has actually been happening to the player and their companions,
-asks the LLM whether any of them has something they'd raise unprompted right now, and — when the answer is yes —
-hands that companion a speaking turn on it.
+On its own **in-game** clock, each of its lenses reads what has actually been happening to the player and their
+companions, asks the LLM whether any of them has something they'd raise unprompted right now, and — when the answer
+is yes — hands that companion the subject to carry and a speaking turn to open it with.
 
 The distinction it's built around: **reaction is when the topic comes from the world; action is when it comes from
 inside the NPC.** Aspirations supply the agenda, the scene supplies only the timing, and being slightly out of step
@@ -26,17 +26,21 @@ whenever a follower is present and you're not in combat:
    anyone's agenda being ignored?"), *Relationship* ("is anything unsaid between these people?") and *Activity*
    ("is there something they want to do with these people?").
 3. Read back a decision — `{"speaker", "target", "narration"}`, or `{"speaker": null}` for nobody.
-4. On a decision to speak, resolve the named speaker and target against the party and deliver the stage direction as
-   **direct narration**, which gives that companion a speaking turn on the topic. They write their own line; the
-   plugin only supplies the agenda. (**Persistent event** delivery records the impulse without voicing it.)
-5. Optionally (*Also generate a private thought*, on by default) ask SkyrimNet for an unvoiced thought from the
-   speaker about what they just raised. It is audienced to them alone and lands in their event history — which is
-   where this mod's own prompt reads thoughts back from, so it is the one thing in the loop that carries forward.
-   It generates asynchronously and so colours what they say from the *next* call onward, not the line they are
-   about to deliver.
+4. On a decision to speak, resolve the named speaker and target against the party and **carry** the stage direction:
+   it is held in the DLL and rendered into that companion's own character bio, verbatim, privately, with no LLM
+   call to deliver it. One per companion per lens, newest first, so two lenses landing together coexist instead of
+   one overwriting the other.
+5. Set a **cue** for her: a vague direct narration — she has something on her mind — that grants her a speaking
+   turn and names no subject, because the bio already carries it. One pending cue per companion however many
+   impulses she picks up, and it waits for the party to go quiet before it goes out. She writes her own line; the
+   plugin only supplies the agenda.
+6. Optionally (*Also generate a private thought*, on by default) ask SkyrimNet for an unvoiced thought from the
+   speaker about what she has just decided she wants to raise. It is audienced to her alone and lands in her event
+   history — which is where this mod's own prompt reads thoughts back from, so it is the one thing in the loop
+   that carries forward. It generates asynchronously and so colours what she says from the *next* call onward.
 
 **Most asks produce silence, by design.** A companion who demands something every two hours is a nag; one who does
-it twice in a night is a person. The Lenses tab counts spoken and quiet asks separately, per lens, so you can see
+it twice in a night is a person. The Lenses tab counts carried and quiet asks separately, per lens, so you can see
 the ratio.
 
 An ask that *does* land costs its lens a **cooldown** on top of its interval — 8 game hours for Aspiration, 24 for
@@ -53,8 +57,8 @@ Everything is visible and tunable in-game through the **SKSE Menu Framework** co
 
 - **Status** — SkyrimNet connection, current followers, each lens's countdown to its next ask, and a
   *Generate an impulse now* button.
-- **Settings** — gating, delivery, how much context to feed the model, and the Lenses tab: a switch, an interval, a
-  cooldown and a slot count per lens, with its spoken/quiet count beside them.
+- **Settings** — gating, cues, how much context to feed the model, and the Lenses tab: a switch, an interval, a
+  cooldown and a slot count per lens, with its carried/quiet count beside them.
 - **History** — the last 25 impulses with the lens each was asked under, plus the exact context JSON of the most recent dispatch.
 
 Settings persist to `Data/SKSE/Plugins/AgencyEngine.json` (press *Save settings*; they load on game start).
@@ -106,19 +110,24 @@ plugin dispatches a static call into SkyrimNet's own native implementation via t
 used on purpose: every argument is then a Papyrus `String`, so nothing has to be packed as a form pointer across the
 VM boundary.
 
-### Why a custom event type
+### Why nothing an impulse carries is an event
 
-A recorded impulse is written as `agencyengine_event`, a schema this plugin registers on every load, rather than
-through SkyrimNet's `RegisterPersistentEvent`. That call has no audience: its events get a short-lived scene-context
-copy (`RegisterEventSchema`'s `shortLivedEnabled`, default true), and `components/context/component_recent_events.prompt`
-renders `scene.short_lived_events` into every NPC in the scene with no participant filter — so an impulse meant for one
-follower was read by everyone standing nearby. Registering the schema with `shortLivedEnabled = false` keeps it out of
-scene context, leaving `components/event_history.prompt` as the only route into a prompt; that one filters on
-`get_recent_events(n, [npc.UUID])`, so only the actors named on the event see it.
+**SkyrimNet stamps an audience onto every event at creation, from proximity and line of sight, and nothing in either
+API narrows it.** Measured twice — once as this mod's own `agencyengine_event` type, once as SkyrimNet's own
+`npc_thoughts` — and both leaked to a bystanding follower's prompt. The audience follows the *creation path*, not the
+event type: anything written through the Papyrus natives is public to the scene. Registering the schema with
+`shortLivedEnabled = false` keeps it out of scene context but not out of a bystander's event history.
 
-One type covers everything the mod records, discriminated by a `kind` field — a new kind is a string constant, not a
-new schema. Schemas live in SkyrimNet's DLL rather than in the save, so registration runs on `kNewGame` /
-`kPostLoadGame`, the same arrangement other SkyrimNet integrations use.
+So a carried impulse is not an event at all. It is held in the DLL and reaches exactly one prompt through a
+**decorator** SkyrimNet calls while rendering that character's bio — verbatim, no LLM call, and guarded on
+`render_mode` so it renders into her own prompt and nobody else's. The only other per-actor channel is asking
+SkyrimNet to generate the content itself (`GenerateNPCThought`), which costs a call and paraphrases; the mod uses it
+for her private *reaction* to carrying something, never for the agenda. `PapyrusBridge.h` and `PendingImpulse.h`
+record the full finding.
+
+The `agencyengine_event` schema is still registered on every load — schemas live in SkyrimNet's DLL rather than in
+the save — and the bridge can still write one, for anything the whole scene *should* know. Nothing on the impulse
+path does.
 
 ## Building
 
@@ -159,7 +168,7 @@ The tests call both with the arguments the plugin passes; `tests/shim/Logging.h`
 header, which doesn't exist outside the game process.
 
 Everything else is verified in game, deliberately: there is no offline renderer for Inja or its decorators, so every
-prompt change is judged from the per-lens spoken/quiet counters, the History page's context payload, the ledger view
+prompt change is judged from the per-lens carried/quiet counters, the History page's context payload, the ledger view
 and the log lines that name every eviction, suppression and declining path.
 
 ### Papyrus
@@ -312,7 +321,7 @@ data to work from, leave it out and the lens still runs on thoughts and events a
 
 Expect the relationship lens to be quieter than the aspiration one, and expect that to be honest. Standing is
 steady-state: the blurbs carry no timestamp and no delta, so they supply the *subject* and never the *why now*. The
-per-lens spoken/quiet counters on the Status page are the readout — a lens that is silent 22 times out of 23 is an
+per-lens carried/quiet counters on the Lenses tab are the readout — a lens that is silent 22 times out of 23 is an
 argument for tracked threads (tier 2), not for loosening its prompt.
 
 There is no general prompt behind the lenses. Switching every lens off doesn't fall back to anything — it stops
@@ -336,6 +345,11 @@ her whole repertoire, veto her into silence, and evict genuine aspiration and re
 Each lens now evicts only within its own ring, and its size is the `Slots` column (0 = use the global number on the
 Impulses tab). Rendering stays combined: the prompt sees one "already raised" list, so no lens repeats another's
 subject.
+
+A slot is written the moment a subject is carried, not when she says it: a cue grants her a turn without naming
+which subject she'll raise, so carry is the only event this mod can actually observe. It stays *provisional* until
+the resolution check confirms it (the subject was met, so it stays suppressed) or something else clears the impulse
+(nobody answered, so it goes back into circulation).
 
 There is a **shared ring** behind the per-lens ones, holding anything raised before the rings existed and anything
 raised by a lens that has since been renamed or deleted. Its slots suppress for every lens and are only ever
@@ -373,8 +387,8 @@ re-evaluates on each reference, so testing it directly in more than one place le
 offer the silence option in one section while forbidding it in another — a bug SkyrimNet's own
 `dialogue_speaker_selector.prompt` has.
 
-The Status page's "N spoken, M quiet" counter is the readout for tuning this: raise the chance if it is all quiet,
-lower it if the companions start sounding scheduled.
+The Lenses tab's "N carried, M quiet" counters are the readout for tuning this: raise the chance if it is all
+quiet, lower it if the companions start sounding scheduled.
 
 ## Roadmap
 
@@ -389,9 +403,9 @@ Tier 1 — *she brings it up* — is what's implemented. The two tiers above it 
 
 Nearer-term, cheaper:
 
-- Cooldowns and variety pressure, so the same follower doesn't speak up twice running.
-- A per-follower record of what was recently raised, fed back into the prompt so it can't repeat itself.
 - Filtering combat hit-lines out of the event tail — they crowd out the material that carries interiority.
+- A cue that can tell "she has one thing on her mind" from "she has three", if the play pass shows stacked
+  impulses coming out as one overloaded turn rather than one thing at a time.
 
 ## License
 

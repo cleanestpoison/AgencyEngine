@@ -17,7 +17,7 @@
 // to parse. Change settings in-game instead.
 {
   "enabled": true,
-  "delivery": 1,
+  "cues": true,
   "generateThought": true,
   "requireFollower": true,
   "skipInCombat": true,
@@ -39,7 +39,6 @@
   "deferOnConversation": true,
   "quietSeconds": 25.0,
   "maxDeferSeconds": 60.0,
-  "degradeToPersistentEvent": true,
   "injectQuietGap": true,
   "quietPollSeconds": 1.0,
 

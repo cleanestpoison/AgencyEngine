@@ -9,23 +9,10 @@
 
 namespace AgencyEngine
 {
-    // How a generated impulse is pushed into SkyrimNet.
-    enum Delivery : int
-    {
-        // PapyrusBridge::RecordEvent — lands in the event history of the
-        // speaker and the actor they addressed, and nobody else's, but is
-        // never voiced. The companion's impulse is recorded rather than said,
-        // which makes this the quiet mode rather than the default one. Named
-        // for SkyrimNet's RegisterPersistentEvent, which this used to call and
-        // still falls back to; the config key keeps the old spelling.
-        kPersistentEvent = 0,
-        // DirectNarrationByUUID — hands the stage direction to the named
-        // companion and gives them a speaking turn on it. This is the whole
-        // point of the mod: it's what turns "she wants to go home" from a note
-        // in a log into her saying so, unprompted. Needs the speaker's UUID;
-        // falls back to a persistent event without one.
-        kDirectNarration = 1,
-    };
+    // There is no delivery *mode* any more. An impulse is always carried — held
+    // in the DLL and rendered into her own character bio — and the only
+    // narration left is the cue, which grants her a speaking turn and names no
+    // subject. See docs/adr/0004 and the `cues` setting below.
 
     // One focused question the impulse loop can ask. Each lens is a prompt file
     // that `{% extends %}`es agencyengine_impulse_base.prompt and overrides a
@@ -167,12 +154,25 @@ namespace AgencyEngine
         //
         // How many recent SkyrimNet events to feed the prompt.
         int   maxEvents = 40;
-        int   delivery = kDirectNarration;
-        // After an impulse is delivered, also ask SkyrimNet for a private thought
-        // from the speaker about what they just decided to raise. Costs a
-        // second LLM call per spoken impulse, and buys the loop its only memory:
-        // the thought lands in their event history, which this mod's own
-        // prompt reads back on the next impulse.
+        // Announce a fresh carry with a **cue**: a vague direct narration — she
+        // seems to have something on her mind — that grants her a speaking turn
+        // and names no subject, because her bio already carries the material.
+        //
+        // One pending cue per companion, coalescing across however many impulses
+        // she picks up, which is why the sentence stays vague: a cue that named
+        // a subject would be false the moment a second carry joined it.
+        //
+        // Off is pure drift. Nothing is narrated at all, and the topics she is
+        // carrying surface only as they colour what she says when somebody else
+        // starts the conversation. That is the built-in fallback rather than a
+        // degraded mode — the impulse is in her bio either way — so switching
+        // this off costs the timing, not the agenda.
+        bool  cues = true;
+        // After an impulse is carried, also ask SkyrimNet for a private thought
+        // from the speaker about what she has just decided she wants to raise.
+        // Costs a second LLM call per carried impulse, and buys the loop its only
+        // memory: the thought lands in her event history, which this mod's own
+        // prompt reads back on the next ask.
         bool  generateThought = true;
         // Don't fire when the player is alone — this mod is about followers.
         bool  requireFollower = true;
@@ -207,17 +207,18 @@ namespace AgencyEngine
         // weakest thing this prompt writes.
         int   forcedImpulseChance = 20;
 
-        // ---- the recorded impulse, carried in her bio ----------------------
+        // ---- the carried impulse, held in her bio --------------------------
         //
-        // A recorded impulse is the one that is never voiced. Carry it into her
-        // next prompt verbatim by holding it in the DLL and answering a
-        // decorator SkyrimNet calls while rendering *her* character bio.
+        // Carrying is what delivery *is* now: the stage direction is held in the
+        // DLL and rendered into her own character bio by a decorator, verbatim
+        // and privately, and the cue above only announces that there is
+        // something there.
         //
-        // On is the whole point of the recorded delivery; off falls back to the
-        // interim behaviour, where SkyrimNet is asked to generate a private
-        // thought from the impulse as a hint. That costs an LLM call and
-        // paraphrases the text, but it is what shipped first and is worth
-        // keeping as an A/B against this.
+        // Off falls back to the interim behaviour this replaced, where SkyrimNet
+        // is asked to generate a private thought from the impulse as a hint —
+        // an LLM call, a paraphrase rather than the text, and no cue, since
+        // there would be nothing for her to speak from. Kept as an A/B against
+        // the carried version rather than as a supported way to run the mod.
         //
         // Nothing here can be an event: SkyrimNet stamps a proximity-and-line-of
         // -sight audience onto every event at creation, so an impulse written as
@@ -248,10 +249,11 @@ namespace AgencyEngine
         // Slots per character, oldest evicted. Eviction is by count and not by a
         // clock on purpose: a quiet in-game week should not make a settled
         // subject raisable again, but six other beats having come and gone is a
-        // fair test of "enough has changed". At most one is provisional at a
-        // time, because a character can only hold one pending impulse.
+        // fair test of "enough has changed". At most one per lens is
+        // provisional at a time, because a character holds one pending impulse
+        // per lens and a lens only evicts within its own ring.
         int   ledgerSlots = 6;
-        // Refuse to deliver an impulse whose topic the ledger already holds.
+        // Refuse to carry an impulse whose topic the ledger already holds.
         // A backstop, not the mechanism — the prompt is told not to repeat, and
         // this catches the times it does anyway. Costs the call that was already
         // spent, so its real value is the log line naming what was suppressed.
@@ -268,20 +270,24 @@ namespace AgencyEngine
         // without this the mode flickers — and every flicker is a HUD
         // notification from SkyrimNet, not just a log line.
         float continuousExitGraceSeconds = 10.0f;
-        // ---- conversation-aware delivery -----------------------------------
+        // ---- conversation-aware cues ---------------------------------------
+        //
+        // Only the cue waits. The impulse itself is carried the moment it comes
+        // back, because the store write has to land before any narration does —
+        // otherwise the speaking turn arrives before the agenda it is for.
         //
         // An LLM round trip takes 4-8 seconds, so checking for a conversation
         // *before* dispatching protects nothing: the answer arrives long after
         // the check, and the party may have started talking in between. The
-        // check that matters is at delivery, which is instantaneous.
+        // check that matters is when the cue goes out, which is instantaneous.
         //
-        // So the impulse is always generated on schedule and then held until
-        // the party is quiet. Generating up front rather than waiting for a gap
-        // and generating then is deliberate — a gap wide enough to start a
-        // request is not necessarily still open 4-8 seconds later, and chasing
-        // it would loop.
+        // So the impulse is asked for on schedule, carried the moment it comes
+        // back, and only the cue waits for the party to be quiet. Asking up
+        // front rather than waiting for a gap and asking then is deliberate — a
+        // gap wide enough to start a request is not necessarily still open 4-8
+        // seconds later, and chasing it would loop.
         bool  deferOnConversation = true;
-        // How long the party must have been silent before an impulse is spoken,
+        // How long the party must have been silent before a cue goes out,
         // measured against four signals: nobody recording voice input, nothing
         // in the speech/TTS queue, this long since the last NPC audio ended,
         // and this long since anyone took a dialogue turn.
@@ -291,14 +297,13 @@ namespace AgencyEngine
         // line, then the LLM generating the reply — reads as total silence, and
         // 17s was routinely reached in the middle of an exchange.
         float quietSeconds = 25.0f;
-        // How long a finished impulse waits for that silence before giving up.
+        // How long a pending cue waits for that silence before it is dropped.
+        //
+        // Dropping it costs the announcement and nothing else: the impulse
+        // itself landed in her bio before the cue was ever set, so it goes on
+        // colouring what she says. There is no degrade path to configure any
+        // more, because there is nothing left to degrade *to*.
         float maxDeferSeconds = 60.0f;
-        // What happens when it gives up. A persistent event is recorded and
-        // never voiced, so the companion doesn't interrupt — the topic simply
-        // lands in her context and colours whatever she says next. The
-        // alternative is dropping it, for anyone who would rather an impulse
-        // never happened than happen silently.
-        bool  degradeToPersistentEvent = true;
         // Tell the prompt how long the party has been quiet. Costs nothing once
         // the reading exists, and it is what lets the model tell "they stopped
         // talking a moment ago" from "nobody has spoken in an hour" — which

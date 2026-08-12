@@ -16,14 +16,6 @@ namespace AgencyEngine::UI
 {
     namespace
     {
-        // One vocabulary for the two places delivery is named: the combo here
-        // and the expiry choice on the same tab. If these strings drift the
-        // page starts describing the same two behaviours in two ways.
-        const char* const kDeliveryItems[] = {
-            "Recorded, never voiced (private event)",
-            "Spoken aloud (direct narration)",
-        };
-
         constexpr ImGuiMCP::ImVec4 kGood{ 0.4f, 0.9f, 0.4f, 1.0f };
         constexpr ImGuiMCP::ImVec4 kWarn{ 0.85f, 0.8f, 0.45f, 1.0f };
         constexpr ImGuiMCP::ImVec4 kBad{ 0.95f, 0.4f, 0.4f, 1.0f };
@@ -71,7 +63,8 @@ namespace AgencyEngine::UI
             } else if (state.inFlight) {
                 ImGui::TextColored(kGood, "%s", "Generating an impulse now.");
             } else if (state.deliveryPending) {
-                ImGui::TextColored(kWarn, "Written, waiting for a gap in the conversation (%.0f s of %.0f).",
+                ImGui::TextColored(kWarn, "Carried - a cue is waiting for a gap in the conversation (%.0f s of "
+                                           "%.0f).",
                                    state.deliveryHeldSeconds, settings.maxDeferSeconds);
             } else if (!state.holdReason.empty()) {
                 ImGui::TextColored(kWarn, "Holding: %s", state.holdReason.c_str());
@@ -152,7 +145,7 @@ namespace AgencyEngine::UI
             }
 
             ImGui::SeparatorText("This session");
-            ImGui::Text("%d spoken, %d quiet", state.impulsesThisSession, state.silencesThisSession);
+            ImGui::Text("%d carried, %d quiet", state.impulsesThisSession, state.silencesThisSession);
             // The per-lens split lives on the Lenses settings tab now, next to
             // the cadence it is evidence for.
             if (!state.lensTallies.empty()) {
@@ -227,7 +220,7 @@ namespace AgencyEngine::UI
                                    "Every ask speaks - and it shows. A forced impulse on a thin day is the "
                                    "weakest thing this prompt writes.");
             }
-            Note("The per-lens 'N spoken, M quiet' counters on the Lenses tab are the readout: raise this if "
+            Note("The per-lens 'N carried, M quiet' counters on the Lenses tab are the readout: raise this if "
                  "it is all quiet, lower it if the companions start sounding scheduled.");
 
             dirty |= ImGui::Checkbox("Also generate a private thought (second LLM call)", &s.generateThought);
@@ -235,15 +228,17 @@ namespace AgencyEngine::UI
                        "just raised. Costs a second LLM call, and is what lets the next impulse know this\n"
                        "one happened. Skipped when SkyrimNet's own thought cooldown is active.");
 
-            ImGui::SeparatorText("Recorded impulses she goes on carrying");
-            dirty |= ImGui::Checkbox("Keep a recorded impulse in her character bio", &s.pendingBioInjection);
-            HelpMarker("A recorded impulse is one she never says out loud. With this on it is held by\n"
-                       "AgencyEngine and written into her own prompt word for word, and into nobody\n"
-                       "else's - so it colours what she says next without any LLM call to deliver it.\n"
-                       "Off falls back to asking SkyrimNet to generate a thought from it instead, which\n"
-                       "costs a call and paraphrases the text.");
-            Note("Applies to the recorded delivery: whenever 'Delivery' on the Speaking up tab is set to "
-                 "recorded, and whenever a spoken impulse gives up waiting for a gap.");
+            ImGui::SeparatorText("What she goes on carrying");
+            dirty |= ImGui::Checkbox("Hold the impulse in her character bio", &s.pendingBioInjection);
+            HelpMarker("This is how an impulse is delivered. It is held by AgencyEngine and written into her\n"
+                       "own prompt word for word, and into nobody else's - so it is there to colour what she\n"
+                       "says without any LLM call to deliver it, and the cue on the Speaking up tab only has\n"
+                       "to announce that there is something there.\n"
+                       "Off falls back to asking SkyrimNet to generate a thought from it instead, which costs\n"
+                       "a call, paraphrases the text, and leaves nothing for a cue to be about - so no cue is\n"
+                       "sent either. Kept as an A/B against the carried version.");
+            Note("One impulse per companion per lens, so she can be carrying an aspiration and a proposal at "
+                 "once. Her bio renders them newest first.");
 
             ImGui::BeginDisabled(!s.pendingBioInjection);
             dirty |= ImGui::SliderFloat("Forget it after (in-game minutes, default 720)", &s.pendingTtlGameMinutes,
@@ -259,7 +254,8 @@ namespace AgencyEngine::UI
                        "conversation covered it, which the timer above cannot see. Point it at a cheap\n"
                        "model under SkyrimNet's own settings - the variant is 'agencyengine_resolve'.");
             if (s.pendingResolveGameMinutes <= 0.0f) {
-                ImGui::TextColored(kWarn, "%s", "Off - only the timer above will clear a recorded impulse.");
+                ImGui::TextColored(kWarn, "%s", "Off - only the timer above will clear a carried impulse, and "
+                                                "a cue never waits on a check.");
             }
             ImGui::EndDisabled();
 
@@ -289,26 +285,29 @@ namespace AgencyEngine::UI
 
         void RenderSpeakingTab(Settings& s, bool& dirty)
         {
-            dirty |= ImGui::Combo("Delivery", &s.delivery, kDeliveryItems,
-                                  static_cast<int>(std::size(kDeliveryItems)));
-            HelpMarker("Recorded: the impulse lands in the event history of the companion and whoever she\n"
-                       "addressed - nobody else present reads it - but is never voiced. It colours what\n"
-                       "she says next instead.\n"
-                       "Spoken: the companion is handed a speaking turn on it. This is the point of the mod.");
+            Note("An impulse always lands in her bio first, whatever this tab says. What is on this tab is "
+                 "the cue: a vague line - she has something on her mind - that hands her a speaking turn "
+                 "without naming a subject, because her bio is already carrying it.");
 
-            const bool spoken = s.delivery == kDirectNarration;
-            if (!spoken) {
-                Note("The rest of this tab is about not interrupting a conversation. A recorded impulse never "
-                     "interrupts anything, so none of it applies.");
+            dirty |= ImGui::Checkbox("Announce a fresh impulse with a cue", &s.cues);
+            HelpMarker("One pending cue per companion, however many impulses she picks up - which is why the\n"
+                       "sentence is vague: a cue that named a subject would be false the moment a second one\n"
+                       "joined it.\n"
+                       "Off is pure drift. Nothing is narrated at all, and what she is carrying surfaces only\n"
+                       "as it colours what she says once somebody else starts talking. That costs the timing,\n"
+                       "not the agenda.");
+
+            if (!s.cues) {
+                Note("The rest of this tab is about when a cue goes out. With cues off, nothing does.");
                 return;
             }
 
             ImGui::SeparatorText("Don't interrupt a conversation");
-            dirty |= ImGui::Checkbox("Wait for a gap before speaking up", &s.deferOnConversation);
+            dirty |= ImGui::Checkbox("Wait for a gap before cueing her", &s.deferOnConversation);
             HelpMarker("An LLM request takes 4-8 seconds, so checking before sending it protects nothing -\n"
-                       "the party can start talking while it is in flight. The impulse is written on\n"
-                       "schedule and then held until nobody is recording voice input, the speech queue is\n"
-                       "empty, and the silence below has elapsed.");
+                       "the party can start talking while it is in flight. So the impulse is asked for on\n"
+                       "schedule and carried straight away, and only the cue waits: until nobody is recording\n"
+                       "voice input, the speech queue is empty, and the silence below has elapsed.");
 
             ImGui::BeginDisabled(!s.deferOnConversation);
             dirty |= ImGui::SliderFloat("Silence required (seconds, default 25)", &s.quietSeconds, 0.0f, 60.0f,
@@ -319,12 +318,14 @@ namespace AgencyEngine::UI
                        "audio alone, you composing a line reads as total silence.");
             dirty |= ImGui::SliderFloat("Give up after (seconds, default 60)", &s.maxDeferSeconds, 5.0f, 300.0f,
                                         "%.0f");
-            HelpMarker("How long a finished impulse waits for that silence before the choice below applies.");
-            dirty |= ImGui::Checkbox("On giving up, record it instead of dropping it", &s.degradeToPersistentEvent);
-            HelpMarker("Recorded, never voiced: the companion does not interrupt, and the topic simply lands\n"
-                       "in her own context - and her target's - where it colours what she says next.\n"
-                       "Unchecked, the impulse is discarded.");
+            HelpMarker("How long a cue waits for that silence before it is dropped. Dropping it costs the\n"
+                       "opening and nothing else - she is still carrying the subject, and it still colours\n"
+                       "what she says.");
             ImGui::EndDisabled();
+
+            Note("If the party talked while a cue was waiting, the 'still live?' check runs on what she is "
+                 "carrying before the cue goes out, and the cue is dropped if that exchange settled all of "
+                 "it. That is what stops her announcing a subject the party just closed.");
 
             ImGui::SeparatorText("What the model is told about the gap");
             dirty |= ImGui::Checkbox("Tell the prompt how long the party has been quiet", &s.injectQuietGap);
@@ -493,7 +494,7 @@ namespace AgencyEngine::UI
                     if (tally == tallies.end()) {
                         ImGui::TextDisabled("%s", "-");
                     } else {
-                        ImGui::Text("%d spoken, %d quiet", tally->spoken, tally->quiet);
+                        ImGui::Text("%d carried, %d quiet", tally->carried, tally->quiet);
                     }
 
                     ImGui::PopID();
@@ -810,9 +811,9 @@ namespace AgencyEngine::UI
             if (!settings.pendingBioInjection) {
                 ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextColored(kWarn, "%s",
-                                   "'Keep a recorded impulse in her character bio' is off, so nothing new will be "
-                                   "carried unsaid. Anything already said out loud is still tracked below, and so "
-                                   "is the ledger.");
+                                   "'Hold the impulse in her character bio' is off, so nothing new will be "
+                                   "carried and no cue will be sent. Anything already open is still tracked "
+                                   "below, and so is the ledger.");
                 ImGui::PopTextWrapPos();
             }
 
@@ -823,16 +824,17 @@ namespace AgencyEngine::UI
             if (pending.empty()) {
                 ImGui::Text("%s", "Nothing is open right now - nobody is carrying anything unsaid, and nothing "
                                   "said is still waiting on an answer.");
-                Note("An entry appears here either when an impulse is recorded rather than spoken, or when one is "
-                     "spoken and we start watching whether anyone picks it up.");
+                Note("An entry appears here the moment a lens produces an impulse, and leaves when the 'still "
+                     "live?' check says the subject was met or the timer forgets it.");
                 RenderLedger();
                 return;
             }
 
-            ImGui::Text("%zu not said yet, %zu said and unanswered", carried, said);
-            Note("Not said yet: she is waiting for an opening, and it is in her bio. Said and unanswered: she "
-                 "raised it, nobody met it, and it is holding a place in the ledger until we know which way it "
-                 "went.");
+            ImGui::Text("%zu carried, %zu raised and unanswered", carried, said);
+            Note("Carried: it is in her bio, and a cue hands her the turn to open it when the party goes quiet. "
+                 "Raised and unanswered is a state from an older version of this mod, kept because entries from "
+                 "it survive an upgrade - this build cannot tell which of the subjects she is carrying she "
+                 "actually raised, so the 'still live?' check is what decides them all.");
 
             const auto queued = Director::PendingResolveRequests();
             if (ImGui::Button("Check all now")) {
