@@ -1813,9 +1813,18 @@ namespace AgencyEngine::Director
             });
 
             for (auto& pending : firing) {
-                logger::info("The party went quiet after {:.0f}s — cueing {}, who is carrying {} thing(s). "
-                             "Reading: {}",
-                             pending.heldMs / 1000.0, pending.cue.speakerName, pending.cue.carries,
+                // Two different numbers, and conflating them is how the log
+                // lies during tuning: `carries` is how many fresh impulses
+                // coalesced into this one cue, while what she is *carrying* is
+                // everything still open in her bio — which includes whatever
+                // survived earlier cues. The stacking question this feature has
+                // open is about the second number.
+                const auto open = std::ranges::count_if(entries, [&](const PendingImpulses::Entry& e) {
+                    return e.formID == pending.cue.formID && !e.unverified;
+                });
+                logger::info("The party went quiet after {:.0f}s — cueing {}: {} fresh carr(ies) behind the cue, "
+                             "{} open in her bio. Reading: {}",
+                             pending.heldMs / 1000.0, pending.cue.speakerName, pending.cue.carries, open,
                              DescribeReading(reading));
                 if (auto* tasks = SKSE::GetTaskInterface()) {
                     tasks->AddTask([cue = pending.cue]() {

@@ -210,7 +210,7 @@ namespace AgencyEngine
         logger::info("=== AgencyEngine {} ===", declaration->GetVersion().string());
         logger::info("SKSE runtime version {}, plugin handle {}", skse->RuntimeVersion().string(),
                      static_cast<std::uint32_t>(skse->GetPluginHandle()));
-        logger::info("Log level is trace; per-tick verbose lines are gated on the 'Verbose tick logging' setting");
+        logger::info("Log level is trace; per-pass verbose lines are gated on the 'Verbose pass logging' setting");
 
         auto* messaging = SKSE::GetMessagingInterface();
         if (!messaging || !messaging->RegisterListener(OnMessage)) {
