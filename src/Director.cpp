@@ -1536,22 +1536,41 @@ namespace AgencyEngine::Director
             // Director thread only, like the other helpers in this section.
             static bool         active = false;      // we consider a fight in progress
             static std::int64_t leftCombatMs = 0;    // when combat last dropped, 0 = not counting
-            static int          acquireReports = -1; // report count at acquire, -1 = nothing outstanding
+            static int          acquireReports = -1; // acquire count at acquire, -1 = nothing outstanding
             static std::int64_t acquiredMs = 0;
+            // Switching the mode off is a simulated hotkey press, and SkyrimNet
+            // drops one that lands while Papyrus is frozen — a menu, a loading
+            // screen, the seconds either side of a fight at a dungeon door. It
+            // comes back reporting the mode still on, so a switch-off has to be
+            // checked and repeated rather than believed. These track the one in
+            // flight; ownership itself lives in Status, where the report writes it.
+            static std::int64_t releaseAskedMs = 0;  // when the last switch-off went out
+            static int          releaseAttempts = 0; // how many this handover has taken
+            // Why we owe the mode back. Set where the reason appears, read by the
+            // handover below — which may not run on the same pass, because it
+            // waits for the game to be running before it asks for anything.
+            static const char*  releaseWhy = "combat ended";
+
+            // A switch-off crosses the VM twice with a frame's wait in between,
+            // so it needs seconds, not milliseconds, before it counts as lost.
+            constexpr std::int64_t kReleaseRetryMs = 5000;
+            constexpr int          kReleaseAttempts = 3;
 
             bool owned = false;
             int  reports = 0;
             WithState([&](Status& state) {
                 owned = state.continuousOwned;
-                reports = state.continuousReports;
+                reports = state.continuousAcquireReports;
             });
 
             const auto release = [&](const char* why) {
                 logger::info("Releasing continuous mode: {}", why);
-                WithState([](Status& state) {
-                    state.continuousOwned = false;
-                    state.continuousPending = true;
-                });
+                releaseAskedMs = NowMs();
+                releaseAttempts += 1;
+                // Ownership is deliberately not cleared here. Only the report
+                // knows whether the toggle took, and assuming it did is what
+                // left the mode switched on with nobody owing it a switch-off.
+                WithState([](Status& state) { state.continuousPending = true; });
                 if (auto* tasks = SKSE::GetTaskInterface()) {
                     tasks->AddTask([]() { PapyrusBridge::SetContinuousMode(false); });
                 }
@@ -1562,37 +1581,69 @@ namespace AgencyEngine::Director
                 // another one entirely — so the combat edge we were tracking is
                 // meaningless now. Continuous mode itself is not save data
                 // though: it's SkyrimNet's own runtime setting, still on from
-                // before the load. Hand it back here or nothing ever will.
+                // before the load. Hand it back below or nothing ever will.
                 if (owned) {
-                    release("a save was loaded while we were holding it");
-                    owned = false;
+                    releaseWhy = "a save was loaded while we were holding it";
                 }
                 active = false;
                 leftCombatMs = 0;
                 acquireReports = -1;
+                releaseAskedMs = 0;
+                releaseAttempts = 0;
             }
 
-            if (!settings.combatContinuousMode) {
+            if (!settings.combatContinuousMode && active) {
                 // Turned off mid-fight. Hand back anything we are holding rather
                 // than leaving the player in a mode they just asked to stop using.
-                if (active && owned) {
-                    release("the setting was switched off while we were holding it");
+                if (owned) {
+                    releaseWhy = "the setting was switched off while we were holding it";
                 }
                 active = false;
                 leftCombatMs = 0;
                 acquireReports = -1;
-                return;
             }
 
             // A stale snapshot means the main thread isn't running our tasks, so
             // playerInCombat is whatever it was before the stall — acting on it
-            // would switch the mode on the strength of an old reading. Holding
-            // position is the safe answer: if we own the mode we keep owning it.
-            if (!snap.valid || !snapshotFresh) {
+            // would switch the mode on the strength of an old reading. A paused
+            // or backgrounded game is worse than useless to act on: it is exactly
+            // where a simulated hotkey gets dropped, which is what the retry
+            // below exists to undo. Holding position is the safe answer either
+            // way: if we own the mode we keep owning it.
+            if (IsSuspended(snap, snapshotFresh)) {
                 return;
             }
 
-            if (snap.playerInCombat) {
+            // A fight we would hold the mode for. Not the same as being in
+            // combat: with the setting off there is no such fight, which is what
+            // makes the handover below run mid-fight when the player switches it
+            // off — and what stops it firing on the pass a new fight starts on
+            // top of a switch-off that didn't take.
+            const bool inFight = settings.combatContinuousMode && snap.playerInCombat;
+
+            // Anything we hold outside such a fight is owed back, whatever put
+            // us here — the fight ended, a save was loaded, the setting was
+            // switched off. One place asks for it, and keeps asking until a
+            // report says the mode is actually off.
+            if (owned && !active && !inFight) {
+                const auto waited = NowMs() - releaseAskedMs;
+                if (releaseAttempts == 0) {
+                    release(releaseWhy);
+                } else if (waited < kReleaseRetryMs) {
+                    // A report is still on its way.
+                } else if (releaseAttempts < kReleaseAttempts) {
+                    release("the last switch-off didn't take");
+                } else if (releaseAttempts == kReleaseAttempts) {
+                    logger::warn("Continuous mode is still on after {} attempts to switch it off. Leaving it for "
+                                 "now — the next fight to end will try again, or press SkyrimNet's continuous-mode "
+                                 "hotkey to clear it by hand.",
+                                 kReleaseAttempts);
+                    releaseAttempts += 1;  // said once; the next acquire starts the count over
+                }
+                return;
+            }
+
+            if (inFight) {
                 leftCombatMs = 0;
                 if (active) {
                     return;
@@ -1600,6 +1651,11 @@ namespace AgencyEngine::Director
                 active = true;
                 acquireReports = reports;
                 acquiredMs = NowMs();
+                // A fresh budget for this fight's handover, whether or not the
+                // last one ever finished.
+                releaseAskedMs = 0;
+                releaseAttempts = 0;
+                releaseWhy = "combat ended";
                 logger::info("Combat started — asking for continuous mode");
                 if (auto* tasks = SKSE::GetTaskInterface()) {
                     WithState([](Status& state) { state.continuousPending = true; });
@@ -1645,7 +1701,10 @@ namespace AgencyEngine::Director
             acquireReports = -1;
 
             if (owned) {
-                release("combat ended");
+                // Asked for on the next pass, by the handover above. Whatever
+                // asks has to be whatever repeats the ask, and repeating it is
+                // the whole point — so there is only the one place.
+                releaseWhy = "combat ended";
             } else {
                 logger::debug("Combat ended, but continuous mode isn't ours to switch off — leaving it as it is");
             }

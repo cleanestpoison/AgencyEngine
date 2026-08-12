@@ -151,10 +151,13 @@ namespace AgencyEngine
         // The toggle is ignored while SkyrimNet's GameMaster agent is off, and
         // there's no query for the agent — a failed acquire is how we find out.
         bool gameMasterOff = false;
-        // Bumped on every report. The Director waits for it to move before
-        // deciding whether it owns the mode, so a fight shorter than the round
-        // trip doesn't leave continuous mode switched on.
-        int  continuousReports = 0;
+        // Bumped on every *acquire* report, and only those. The Director waits
+        // for it to move before deciding whether it owns the mode, so a fight
+        // shorter than the round trip doesn't leave continuous mode switched
+        // on. Counting switch-off reports here too would satisfy that wait with
+        // the previous fight's reply — which is the one case the wait exists
+        // for, since back-to-back fights are exactly when it happens.
+        int  continuousAcquireReports = 0;
 
         // ---- conversation-aware cues --------------------------------------
         //

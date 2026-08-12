@@ -376,26 +376,40 @@ namespace AgencyEngine::PapyrusBridge
                 const bool after = (bits & 2) != 0;
                 const bool acquire = a_event->strArg == "acquire";
 
-                // We own the mode only when we are the ones who switched it on.
-                // Finding it already on means the player turned it on for their
-                // own reasons, and switching it off after the fight would be us
-                // undoing a decision that was never ours.
-                const bool owned = acquire && !before && after;
                 // The toggle is a no-op while SkyrimNet's GameMaster agent is
                 // disabled, and SkyrimNet exposes no way to ask about the agent
                 // directly — this is the only way we find out.
                 const bool gameMasterOff = acquire && !after;
 
                 bool announceGameMaster = false;
+                bool owned = false;    // whether we owe a switch-off after this report
+                bool kept = false;     // an acquire that found a switch-off we still owed
+                bool stuck = false;    // a switch-off that came back with the mode still on
                 WithState([&](Status& state) {
                     state.continuousEnabled = after;
                     state.continuousPending = false;
-                    state.continuousReports += 1;
                     if (acquire) {
-                        state.continuousOwned = owned;
+                        state.continuousAcquireReports += 1;
+                        // We own the mode when we are the ones who switched it
+                        // on — or when we already owed a switch-off and this
+                        // acquire found it still on, which is what a fight
+                        // starting on top of a switch-off that didn't take
+                        // looks like. Finding it on while owing nothing means
+                        // the player turned it on for their own reasons, and
+                        // switching it off after the fight would be us undoing
+                        // a decision that was never ours.
+                        kept = before && after && state.continuousOwned;
+                        state.continuousOwned = after && (!before || state.continuousOwned);
                     } else {
-                        state.continuousOwned = false;
+                        // A switch-off that leaves the mode ON did not take.
+                        // Keep owing it: dropping the debt here strands the
+                        // mode on for the rest of the session, because the next
+                        // fight's acquire then reads it as the player's own and
+                        // never hands it back either.
+                        stuck = after;
+                        state.continuousOwned = after;
                     }
+                    owned = state.continuousOwned;
                     announceGameMaster = gameMasterOff != state.gameMasterOff;
                     state.gameMasterOff = gameMasterOff;
                 });
@@ -404,13 +418,21 @@ namespace AgencyEngine::PapyrusBridge
                     logger::warn("Continuous mode did not switch on. SkyrimNet ignores the continuous-mode toggle "
                                  "while the GameMaster agent is disabled — enable GameMaster in SkyrimNet, or turn "
                                  "off 'Continuous mode during combat' here.");
+                } else if (kept) {
+                    logger::info("Continuous mode was already on when combat started, but it was still on because "
+                                 "our last switch-off didn't take — it stays ours, and it will be switched off "
+                                 "when this fight ends");
                 } else if (acquire && before) {
                     logger::info("Continuous mode was already on when combat started — leaving it alone, and it "
                                  "will not be switched off when combat ends");
                 } else if (acquire && owned) {
                     logger::info("Continuous mode switched ON for combat (we now owe a switch-off)");
+                } else if (stuck) {
+                    logger::warn("Continuous mode is still ON after asking for it to be switched off. SkyrimNet "
+                                 "drops the toggle while Papyrus is frozen — a menu or a loading screen. Still "
+                                 "ours, and it will be asked for again.");
                 } else if (!acquire) {
-                    logger::info("Continuous mode switched {} after combat", after ? "but is somehow still ON" : "OFF");
+                    logger::info("Continuous mode switched OFF after combat");
                 }
 
                 return RE::BSEventNotifyControl::kContinue;
