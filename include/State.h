@@ -104,6 +104,17 @@ namespace AgencyEngine
         std::string playerName;
         std::string location;
         bool        playerInCombat = false;
+        // In-game minutes per real minute — the game's own TimeScale global.
+        // 20 is vanilla; heavier modlists commonly run 6 to 10.
+        //
+        // Every clock in this mod is in *in-game* minutes, so this is the only
+        // number that turns one into a real-world cost: the identical config
+        // asks three times as often at 20 as it does at 6. Nothing in the
+        // Director reads it — it is carried purely so the settings page can say
+        // what each interval means in minutes the player will actually sit
+        // through. Raw, including 0: a mod that freezes time sets it there, and
+        // the UI has to be able to say that rather than quietly showing 20.
+        float       timescale = 20.0f;
         bool        gamePaused = false;
         // The window has focus. This is a *separate* question from gamePaused:
         // only a menu pauses the simulation, so a backgrounded game keeps

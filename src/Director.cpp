@@ -369,6 +369,12 @@ namespace AgencyEngine::Director
             if (player && calendar) {
                 snap.valid = true;
                 snap.gameDays = static_cast<double>(calendar->GetCurrentGameTime());
+                // Read every pass rather than once at load: it is the game's
+                // setting, not ours, and any number of other mods move it
+                // mid-session. Taken raw — 0 means a mod has frozen time, which
+                // stops every in-game clock in here dead, and the settings page
+                // says so rather than dividing by it.
+                snap.timescale = calendar->GetTimescale();
 
                 if (const char* name = player->GetDisplayFullName()) {
                     snap.playerName = name;
@@ -1178,11 +1184,22 @@ namespace AgencyEngine::Director
             // The LLM variant stays the same across lenses on purpose: they are
             // the same job at the same cost, and one variant means one place in
             // SkyrimNet's UI to point impulses at a cheaper model.
+            // The next-ask figures carry their real-time equivalent: the whole
+            // question a reader has of this line is how often it happens, and
+            // "in 120 in-game minutes" answers that only if they also know the
+            // timescale. Guarded, because a frozen clock makes it a division by
+            // zero and the answer is "never" rather than a number.
+            const auto realMinutes = [scale = snap.timescale](float gameMinutes) {
+                return scale > 0.0f ? std::format("{:.1f} real min", gameMinutes / scale)
+                                    : std::string{ "never — the game clock is frozen" };
+            };
             logger::info("Asking the {} question — prompt '{}' (variant '{}'), context {} bytes, {} follower(s). "
-                         "Next {} ask in {:.0f} in-game minutes, or {:.0f} if this one carries",
+                         "Next {} ask in {:.0f} in-game minutes ({}), or {:.0f} ({}) if this one carries",
                          lens.name.empty() ? "unnamed" : lens.name, lens.prompt, kLLMVariant, contextJson.size(),
                          roster.size(), lens.name.empty() ? "unnamed" : lens.name, lens.intervalGameMinutes,
-                         lens.intervalGameMinutes + lens.cooldownGameMinutes);
+                         realMinutes(lens.intervalGameMinutes),
+                         lens.intervalGameMinutes + lens.cooldownGameMinutes,
+                         realMinutes(lens.intervalGameMinutes + lens.cooldownGameMinutes));
 
             if (player.uuid == 0) {
                 logger::warn("SkyrimNet does not know the player's UUID — the impulse will be registered without a "
@@ -1421,6 +1438,7 @@ namespace AgencyEngine::Director
             static std::vector<std::string> previousFollowers;
             static bool                     previousInCombat = false;
             static std::string              previousLocation;
+            static float                    previousTimescale = 0.0f;
 
             if (verbose) {
                 logger::trace(
@@ -1444,6 +1462,16 @@ namespace AgencyEngine::Director
                 previousFollowers = current;
                 previousInCombat = snap.playerInCombat;
                 previousLocation = snap.location;
+                previousTimescale = snap.timescale;
+                // Named on the first snapshot and again whenever it moves,
+                // because every cadence this log quotes is in in-game minutes
+                // and this is the only line that says what one of those costs
+                // in real time. A log from a timescale-6 modlist and one from a
+                // vanilla install describe completely different ask rates off
+                // identical settings.
+                logger::info("Timescale is {:.1f} — one real minute is {:.1f} in-game minutes, so every in-game "
+                             "interval below is 1/{:.1f} of itself in real time",
+                             snap.timescale, snap.timescale, snap.timescale);
                 logger::info("First world snapshot: game time {}, location '{}', {} follower(s){}",
                              FormatGameTime(snap.gameDays), snap.location.empty() ? "unknown" : snap.location,
                              current.size(), current.empty() ? "" : ": ");
@@ -1474,6 +1502,22 @@ namespace AgencyEngine::Director
                 logger::info("Location changed: '{}' -> '{}'", previousLocation.empty() ? "unknown" : previousLocation,
                              snap.location.empty() ? "unknown" : snap.location);
                 previousLocation = snap.location;
+            }
+
+            // On change only, like everything else here. It moves rarely — a
+            // settings page, another mod, or a script freezing time — and each
+            // time it does, every cadence in this log starts meaning something
+            // different in real minutes.
+            if (std::abs(snap.timescale - previousTimescale) > 0.01f) {
+                logger::info("Timescale changed: {:.1f} -> {:.1f} in-game minutes per real minute. Every lens "
+                             "interval and cooldown now costs {} real time than it did.",
+                             previousTimescale, snap.timescale,
+                             snap.timescale > previousTimescale ? "less" : "more");
+                if (snap.timescale <= 0.0f) {
+                    logger::warn("Timescale is 0 — the game clock is frozen, so no lens will come due and "
+                                 "nothing carried will expire until it moves again");
+                }
+                previousTimescale = snap.timescale;
             }
         }
 
@@ -2338,6 +2382,36 @@ namespace AgencyEngine::Director
     {
         std::scoped_lock lock{ g_resolveRequestLock };
         return g_resolveRequests.size();
+    }
+
+    void SetTimescale(float scale)
+    {
+        // Clamped rather than trusted: the slider is bounded, but this is a
+        // write into a global every quest script in the game divides by, and 0
+        // stops the world.
+        const auto wanted = std::clamp(scale, 1.0f, 200.0f);
+        auto*      tasks = SKSE::GetTaskInterface();
+        if (!tasks) {
+            logger::warn("Timescale: no task interface — the game's timescale was left alone");
+            return;
+        }
+        tasks->AddTask([wanted]() {
+            auto* calendar = RE::Calendar::GetSingleton();
+            if (!calendar || !calendar->timeScale) {
+                logger::warn("Timescale: the game's TimeScale global is not available — nothing was changed");
+                return;
+            }
+            const auto before = calendar->timeScale->value;
+            calendar->timeScale->value = wanted;
+            // Worth a line even though nothing here reads it: this mod's whole
+            // cadence is in in-game minutes, so a log that does not record the
+            // moment the conversion rate moved cannot explain the ask rate
+            // either side of it.
+            logger::info("Timescale: {:.1f} -> {:.1f} in-game minutes per real minute, set from the settings "
+                         "page. It is the game's own setting and is saved with the save; AgencyEngine does not "
+                         "store it or put it back at load.",
+                         before, wanted);
+        });
     }
 
     void ResetTimer()

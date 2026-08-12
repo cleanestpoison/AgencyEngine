@@ -55,4 +55,17 @@ namespace AgencyEngine::Director
     // "Check all" on a five-follower party is otherwise indistinguishable from
     // a button that did nothing.
     std::size_t PendingResolveRequests();
+
+    // Write the game's TimeScale global, from a main-thread task.
+    //
+    // This is the one control on the settings page that is not ours. TimeScale
+    // belongs to the game, is shared with every other mod, and is saved in the
+    // save file — so it is written once, when asked, and never read back out of
+    // AgencyEngine.json or reasserted at load. A mod that quietly restores a
+    // game-wide setting on every startup is a mod that fights every other one
+    // that touches it, and this one has no business winning that fight.
+    //
+    // It is here at all because every cadence in this mod is in in-game minutes
+    // and this number is what they cost in real ones.
+    void SetTimescale(float scale);
 }

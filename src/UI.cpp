@@ -43,6 +43,55 @@ namespace AgencyEngine::UI
             ImGui::PopTextWrapPos();
         }
 
+        // ---- in-game minutes, in minutes you will actually sit through ------
+        //
+        // Every clock in this mod is in in-game minutes, and the page used to
+        // stop at converting them to in-game *hours* — which restates the number
+        // without answering the question anybody has, namely how often this
+        // costs an LLM call. At vanilla timescale 20 a two-hour interval is six
+        // real minutes; at the 6 or 10 a heavier modlist runs it is twenty or
+        // twelve. Same config, three times the bill, and nothing on the page
+        // said so.
+        //
+        // So every in-game duration on these pages carries its real-time length
+        // beside it, read from the game's live TimeScale rather than assumed.
+
+        // Below this, in-game minutes are shown in seconds rather than minutes —
+        // at timescale 20 a fifteen-minute interval is forty-five real seconds,
+        // and "0.8 real min" is not how anyone thinks about that.
+        constexpr float kRealSecondsCutoff = 1.0f;
+        // Above this, in hours: past an hour and a half the minute count stops
+        // being a duration anyone pictures.
+        constexpr float kRealHoursCutoff = 90.0f;
+
+        std::string RealTime(float gameMinutes, float timescale)
+        {
+            // A mod has frozen the clock. Every in-game deadline in here is
+            // then unreachable, which is worth saying in the place someone is
+            // looking when they wonder why nothing fires.
+            if (timescale <= 0.0f) {
+                return "time is frozen";
+            }
+            if (gameMinutes <= 0.0f) {
+                return "none";
+            }
+            const float realMinutes = gameMinutes / timescale;
+            if (realMinutes < kRealSecondsCutoff) {
+                return std::format("{:.0f} real sec", realMinutes * 60.0f);
+            }
+            if (realMinutes < kRealHoursCutoff) {
+                return std::format("{:.0f} real min", realMinutes);
+            }
+            return std::format("{:.1f} real h", realMinutes / 60.0f);
+        }
+
+        // The same, for a countdown that is already running — reads as "in N",
+        // so it takes the negative-is-now clamp the call sites all wanted.
+        std::string RealTimeLeft(double gameMinutes, float timescale)
+        {
+            return RealTime(static_cast<float>(gameMinutes < 0.0 ? 0.0 : gameMinutes), timescale);
+        }
+
         // ---- Status ---------------------------------------------------------
 
         void __stdcall RenderStatus()
@@ -83,8 +132,24 @@ namespace AgencyEngine::UI
                 if (clock.inFlight) {
                     ImGui::TextDisabled("    %s - asking now", clock.name.c_str());
                 } else {
-                    ImGui::TextDisabled("    %s - asks in %.0f in-game minutes", clock.name.c_str(),
-                                        minutes < 0.0 ? 0.0 : minutes);
+                    ImGui::TextDisabled("    %s - asks in %.0f in-game minutes (%s)", clock.name.c_str(),
+                                        minutes < 0.0 ? 0.0 : minutes,
+                                        RealTimeLeft(minutes, state.snapshot.timescale).c_str());
+                }
+            }
+            // The conversion rate every countdown above is quoted in. On the
+            // Status page rather than only next to the sliders, because "how
+            // often does this thing call the LLM" is a Status question and the
+            // answer is not on the settings page at all without this number.
+            if (state.snapshot.valid) {
+                if (state.snapshot.timescale <= 0.0f) {
+                    ImGui::TextColored(kBad, "%s",
+                                       "Timescale is 0 - something has frozen the game clock, so no lens will "
+                                       "ever come due.");
+                } else {
+                    ImGui::TextDisabled("Timescale %.0f: one real minute is %.0f in-game minutes. Every clock in "
+                                        "this mod is in-game.",
+                                        state.snapshot.timescale, state.snapshot.timescale);
                 }
             }
 
@@ -195,7 +260,7 @@ namespace AgencyEngine::UI
 
         // ---- Settings -------------------------------------------------------
 
-        void RenderImpulsesTab(Settings& s, bool& dirty)
+        void RenderImpulsesTab(Settings& s, bool& dirty, float timescale)
         {
             dirty |= ImGui::Checkbox("Enabled", &s.enabled);
             HelpMarker("Master switch. Off, the loop still passes but no lens is ever asked.");
@@ -243,9 +308,10 @@ namespace AgencyEngine::UI
             ImGui::BeginDisabled(!s.pendingBioInjection);
             dirty |= ImGui::SliderFloat("Forget it after (in-game minutes, default 720)", &s.pendingTtlGameMinutes,
                                         30.0f, 4320.0f, "%.0f");
-            HelpMarker("Something she has been meaning to raise for three in-game days is not an agenda,\n"
-                       "it is a fixture. Past this it is dropped.");
-            ImGui::TextDisabled("= %.1f in-game hours.", s.pendingTtlGameMinutes / 60.0f);
+            HelpMarker("Something she has been meaning to raise half an in-game day after deciding to is not\n"
+                       "an agenda, it is a fixture. Past this it is dropped.");
+            ImGui::TextDisabled("= %.1f in-game hours, or about %s at your timescale.",
+                                s.pendingTtlGameMinutes / 60.0f, RealTime(s.pendingTtlGameMinutes, timescale).c_str());
 
             dirty |= ImGui::SliderFloat("Check whether it is still live every (in-game minutes, 0 = never)",
                                         &s.pendingResolveGameMinutes, 0.0f, 720.0f, "%.0f");
@@ -253,6 +319,14 @@ namespace AgencyEngine::UI
                        "so. Worth having: the usual way an agenda stops being live is that the\n"
                        "conversation covered it, which the timer above cannot see. Point it at a cheap\n"
                        "model under SkyrimNet's own settings - the variant is 'agencyengine_resolve'.");
+            if (s.pendingResolveGameMinutes > 0.0f) {
+                // Per open impulse, which is the part that surprises people: a
+                // party carrying six between them checks six times a cycle, not
+                // once. Said here rather than in the tooltip because it is the
+                // number that decides the bill.
+                ImGui::TextDisabled("= about %s, for each impulse anyone is carrying.",
+                                    RealTime(s.pendingResolveGameMinutes, timescale).c_str());
+            }
             if (s.pendingResolveGameMinutes <= 0.0f) {
                 ImGui::TextColored(kWarn, "%s", "Off - only the timer above will clear a carried impulse, and "
                                                 "a cue never waits on a check.");
@@ -310,13 +384,18 @@ namespace AgencyEngine::UI
                        "voice input, the speech queue is empty, and the silence below has elapsed.");
 
             ImGui::BeginDisabled(!s.deferOnConversation);
-            dirty |= ImGui::SliderFloat("Silence required (seconds, default 25)", &s.quietSeconds, 0.0f, 60.0f,
+            // Real seconds, not in-game ones, and said so on the label: this tab
+            // and the Lenses tab now sit either side of a tab bar quoting two
+            // different units, and a bare "seconds" between them is a trap. A
+            // cue waits for a gap in a conversation that is happening in real
+            // time, so the timescale has nothing to do with it.
+            dirty |= ImGui::SliderFloat("Silence required (real seconds, default 25)", &s.quietSeconds, 0.0f, 60.0f,
                                         "%.0f");
             HelpMarker("Measured against four signals: nobody recording voice input, nothing in the speech\n"
                        "queue, this long since the last NPC audio ended, and this long since anyone took a\n"
                        "dialogue turn. The dialogue-turn clock is what makes the number mean anything - on\n"
                        "audio alone, you composing a line reads as total silence.");
-            dirty |= ImGui::SliderFloat("Give up after (seconds, default 60)", &s.maxDeferSeconds, 5.0f, 300.0f,
+            dirty |= ImGui::SliderFloat("Give up after (real seconds, default 60)", &s.maxDeferSeconds, 5.0f, 300.0f,
                                         "%.0f");
             HelpMarker("How long a cue waits for that silence before it is dropped. Dropping it costs the\n"
                        "opening and nothing else - she is still carrying the subject, and it still colours\n"
@@ -351,16 +430,104 @@ namespace AgencyEngine::UI
                  "and there is no way to ask, so a failed switch-on is reported on the Status page.");
 
             ImGui::BeginDisabled(!s.combatContinuousMode);
-            dirty |= ImGui::SliderFloat("Grace before switching off (seconds, default 10)",
+            dirty |= ImGui::SliderFloat("Grace before switching off (real seconds, default 10)",
                                         &s.continuousExitGraceSeconds, 0.0f, 60.0f, "%.0f");
             HelpMarker("Combat drops briefly between waves. Waiting this long before switching off stops the\n"
                        "mode - and SkyrimNet's on-screen notification - flickering.");
             ImGui::EndDisabled();
         }
 
-        void RenderLensesTab(Settings& s, bool& dirty, const std::vector<LensTally>& tallies,
-                             const std::vector<LensClock>& clocks, double nowGameDays)
+        // The game's timescale, read live and settable from here.
+        //
+        // Not one of our settings, and deliberately not stored as one: TimeScale
+        // is the game's, shared with every mod installed, and saved in the save
+        // file. AgencyEngine writes it when asked and never puts it back at
+        // load, because a mod that silently reasserts a game-wide setting every
+        // startup fights every other mod that touches the same one.
+        //
+        // It is on this tab because it is the second half of every number in the
+        // table below: the intervals are in in-game minutes, and this is what
+        // one costs in real ones.
+        void RenderTimescale(float timescale)
         {
+            ImGui::SeparatorText("Your timescale");
+
+            if (timescale <= 0.0f) {
+                ImGui::TextColored(kBad, "%s",
+                                   "Timescale is 0 - the game clock is frozen, so no lens will ever come due and "
+                                   "nothing carried will ever expire.");
+            } else {
+                ImGui::Text("Timescale %.0f: one real minute is %.0f in-game minutes.", timescale, timescale);
+                ImGui::TextDisabled("So a 60-minute interval below is %s, and a 480-minute cooldown is %s.",
+                                    RealTime(60.0f, timescale).c_str(), RealTime(480.0f, timescale).c_str());
+            }
+            Note("Every clock in this mod is in in-game minutes, so this number decides how often it actually "
+                 "asks - and an ask is an LLM call whether or not anyone had anything to say. A modlist running "
+                 "6 asks a third as often as a vanilla 20 off the identical settings.");
+
+            // A slider that writes on release would make a game-wide setting
+            // change while someone is dragging past it. Held locally and applied
+            // by a button instead.
+            //
+            // Re-seeded whenever the game's own value moves rather than only on
+            // the first draw: that covers the first frame, our own apply landing
+            // a moment later, and another mod or a console command changing it
+            // while the page is open. Without it the slider would sit on a stale
+            // number with the apply button lit, one stray click from putting a
+            // setting back that something else deliberately moved.
+            static float wanted = 0.0f;
+            static float lastSeen = -1.0f;
+            if (std::abs(timescale - lastSeen) > 0.01f) {
+                lastSeen = timescale;
+                wanted = timescale > 0.0f ? timescale : 20.0f;
+            }
+
+            ImGui::SetNextItemWidth(240.0f);
+            ImGui::SliderFloat("##timescale", &wanted, 1.0f, 40.0f, "%.0f");
+            ImGui::SameLine();
+            ImGui::BeginDisabled(std::abs(wanted - timescale) < 0.01f);
+            if (ImGui::Button("Set the game's timescale")) {
+                Director::SetTimescale(wanted);
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Back to current")) {
+                wanted = timescale > 0.0f ? timescale : 20.0f;
+            }
+
+            // The warning is about the *game*, not about this mod. Lower is
+            // strictly cheaper here — in-game clocks take longer in real time,
+            // so fewer asks per hour played — which is exactly why someone
+            // reading this tab is tempted, and exactly why the cost of going too
+            // low has to be on the same screen as the temptation.
+            if (wanted < 7.0f) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(kBad, "%s",
+                                   "Below 7 is where Skyrim itself starts to break. NPCs stop completing their "
+                                   "daily packages and never reach where they were walking, shops stop "
+                                   "restocking, respawns and bounty decay stall, and any mod with a needs or "
+                                   "upkeep timer drifts out of step. 7 is about as low as the game takes "
+                                   "without misbehaving; 6 to 10 is what heavier modlists settle on.");
+                ImGui::PopTextWrapPos();
+            } else if (wanted >= 30.0f) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(kWarn, "%s",
+                                   "High timescale means every interval below arrives sooner in real time - the "
+                                   "same lens settings will ask, and spend, considerably more often.");
+                ImGui::PopTextWrapPos();
+            }
+            Note("This is the game's own setting, not AgencyEngine's. It is shared with every other mod and "
+                 "saved with your save; this mod writes it when you press the button and never touches it "
+                 "again, so it is not stored in AgencyEngine.json and is not restored at load. If a modlist "
+                 "or another mod sets a timescale deliberately, change it there instead.");
+        }
+
+        void RenderLensesTab(Settings& s, bool& dirty, const std::vector<LensTally>& tallies,
+                             const std::vector<LensClock>& clocks, double nowGameDays, float timescale)
+        {
+            RenderTimescale(timescale);
+            ImGui::SeparatorText("Lenses");
+
             Note("Every impulse is asked through a lens: a prompt that inherits "
                  "agencyengine_impulse_base.prompt and asks for one kind of thing. Each lens asks on its own "
                  "clock - they do not take turns and they do not compete, because asking two questions is "
@@ -432,19 +599,23 @@ namespace AgencyEngine::UI
                     }
 
                     // In-game minutes, like every other clock in this mod, but
-                    // shown in hours underneath: nobody thinks about a
-                    // relationship lens in units of 1440 minutes.
+                    // shown in in-game hours *and* in real time underneath:
+                    // nobody thinks about a relationship lens in units of 1440
+                    // minutes, and the hours alone still don't say how often it
+                    // spends a call.
                     ImGui::TableNextColumn();
                     ImGui::SetNextItemWidth(-1.0f);
                     dirty |= ImGui::SliderFloat("##interval", &lens.intervalGameMinutes, 15.0f, 2880.0f,
                                                 "%.0f min");
-                    ImGui::TextDisabled("%.1f h", lens.intervalGameMinutes / 60.0f);
+                    ImGui::TextDisabled("%.1f game h", lens.intervalGameMinutes / 60.0f);
+                    ImGui::TextDisabled("%s", RealTime(lens.intervalGameMinutes, timescale).c_str());
 
                     ImGui::TableNextColumn();
                     ImGui::SetNextItemWidth(-1.0f);
                     dirty |= ImGui::SliderFloat("##cooldown", &lens.cooldownGameMinutes, 0.0f, 5760.0f,
                                                 lens.cooldownGameMinutes <= 0.0f ? "none" : "%.0f min");
-                    ImGui::TextDisabled("%.1f h", lens.cooldownGameMinutes / 60.0f);
+                    ImGui::TextDisabled("%.1f game h", lens.cooldownGameMinutes / 60.0f);
+                    ImGui::TextDisabled("%s", RealTime(lens.cooldownGameMinutes, timescale).c_str());
 
                     // Read straight off the Director's clock, because a cadence
                     // you cannot watch running is a cadence nobody can tune. A
@@ -465,6 +636,7 @@ namespace AgencyEngine::UI
                     } else {
                         const double minutes = (clock->dueGameDays - nowGameDays) * 24.0 * 60.0;
                         ImGui::Text("%.0f min", minutes < 0.0 ? 0.0 : minutes);
+                        ImGui::TextDisabled("%s", RealTimeLeft(minutes, timescale).c_str());
                     }
 
                     // Under the countdown rather than in a column of its own:
@@ -519,9 +691,10 @@ namespace AgencyEngine::UI
             }
 
             HelpMarker("Each prompt file resolves to Data/SKSE/Plugins/SkyrimNet/prompts/<name>.prompt");
-            Note("Next ask counts down in in-game minutes, so it stretches and compresses with the timescale "
-                 "rather than with the clock. Several lenses coming due at once is ordinary and simply "
-                 "produces several asks.");
+            Note("Next ask counts down in in-game minutes, with the real time it works out to underneath. It "
+                 "stretches and compresses with the timescale rather than with the clock, so sleeping or "
+                 "waiting brings every one of these forward. Several lenses coming due at once is ordinary and "
+                 "simply produces several asks.");
             Note("'Ask now' asks that one lens on the next pass whatever its clock says, and whatever the "
                  "follower and combat gates say. It spends the clock like any other ask - so it costs that "
                  "lens its next natural ask, and the cooldown too if it lands. It is the button for tuning one "
@@ -592,8 +765,8 @@ namespace AgencyEngine::UI
         void RenderDiagnosticsTab(Settings& s, bool& dirty)
         {
             ImGui::BeginDisabled(!s.deferOnConversation && !s.injectQuietGap);
-            dirty |= ImGui::SliderFloat("Conversation poll (seconds, default 1)", &s.quietPollSeconds, 0.25f, 5.0f,
-                                        "%.2f");
+            dirty |= ImGui::SliderFloat("Conversation poll (real seconds, default 1)", &s.quietPollSeconds, 0.25f,
+                                        5.0f, "%.2f");
             HelpMarker("How often the Papyrus bridge is asked whether anyone is talking. One static call per\n"
                        "interval, running continuously while either conversation feature is on.");
             ImGui::EndDisabled();
@@ -636,10 +809,17 @@ namespace AgencyEngine::UI
             std::vector<LensTally> tallies;
             std::vector<LensClock> clocks;
             double                 nowGameDays = 0.0;
+            // Vanilla until a save is loaded: with no game running there is no
+            // TimeScale to read, and every real-time figure on this page has to
+            // say *something*. 20 is the one that is right for a default install.
+            float                  timescale = 20.0f;
             WithState([&](Status& state) {
                 tallies = state.lensTallies;
                 clocks = state.lensClocks;
                 nowGameDays = state.snapshot.gameDays;
+                if (state.snapshot.valid) {
+                    timescale = state.snapshot.timescale;
+                }
             });
 
             {
@@ -648,7 +828,7 @@ namespace AgencyEngine::UI
 
                 if (ImGui::BeginTabBar("agencyengine_settings")) {
                     if (ImGui::BeginTabItem("Impulses")) {
-                        RenderImpulsesTab(s, dirty);
+                        RenderImpulsesTab(s, dirty, timescale);
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Speaking up")) {
@@ -660,7 +840,7 @@ namespace AgencyEngine::UI
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Lenses")) {
-                        RenderLensesTab(s, dirty, tallies, clocks, nowGameDays);
+                        RenderLensesTab(s, dirty, tallies, clocks, nowGameDays, timescale);
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Context")) {
@@ -922,16 +1102,24 @@ namespace AgencyEngine::UI
                 const double ttlLeft = settings.pendingTtlGameMinutes - ageMinutes;
                 // The lens is on the row's header already, so this is only the
                 // clock.
-                ImGui::TextDisabled("%s for %.0f in-game minutes", entry.spoken ? "unanswered" : "carried",
-                                    ageMinutes < 0.0 ? 0.0 : ageMinutes);
+                // Each clock with the real time it works out to. These are the
+                // rows where the two units bite hardest: an impulse "forgotten
+                // in 400 in-game minutes" is twenty real minutes at vanilla
+                // timescale and over an hour at 6, and which of those it is
+                // decides whether waiting for her to raise it is reasonable.
+                const float scale = snapshot.valid ? snapshot.timescale : 20.0f;
+                ImGui::TextDisabled("%s for %.0f in-game minutes (%s)", entry.spoken ? "unanswered" : "carried",
+                                    ageMinutes < 0.0 ? 0.0 : ageMinutes, RealTimeLeft(ageMinutes, scale).c_str());
                 if (settings.pendingTtlGameMinutes > 0.0f) {
-                    ImGui::TextDisabled("forgotten in %.0f in-game minutes", ttlLeft < 0.0 ? 0.0 : ttlLeft);
+                    ImGui::TextDisabled("forgotten in %.0f in-game minutes (%s)", ttlLeft < 0.0 ? 0.0 : ttlLeft,
+                                        RealTimeLeft(ttlLeft, scale).c_str());
                 }
                 if (settings.pendingResolveGameMinutes > 0.0f) {
                     const double sinceCheck = (snapshot.gameDays - entry.lastCheckGameDays) * 24.0 * 60.0;
                     const double nextCheck = settings.pendingResolveGameMinutes - sinceCheck;
-                    ImGui::TextDisabled("next 'still live?' check in %.0f in-game minutes",
-                                        nextCheck < 0.0 ? 0.0 : nextCheck);
+                    ImGui::TextDisabled("next 'still live?' check in %.0f in-game minutes (%s)",
+                                        nextCheck < 0.0 ? 0.0 : nextCheck,
+                                        RealTimeLeft(nextCheck, scale).c_str());
                 } else {
                     ImGui::TextDisabled("%s", "'still live?' checks are off - only the timer above will clear it");
                 }

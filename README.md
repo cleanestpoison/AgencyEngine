@@ -282,6 +282,25 @@ repeat-proposing — "spar with me" again tonight — so it takes much the longe
 Aspiration deliberately does **not** own mundane appetites — rest, food, a bed, a drink. Those are Activity's, and
 leaving them in both would split one register across two names instead of asking two questions.
 
+### Every cadence is in game time, so your timescale sets the bill
+
+The intervals above are **in-game** minutes, and an ask is an LLM call whether or not anyone had anything to say.
+What turns one into the other is Skyrim's `TimeScale` — how many in-game minutes pass in a real one. At vanilla 20
+the shipped roster asks about eighteen times an hour played; at the 6 to 10 heavier modlists run, the identical
+settings ask a third as often. Nothing about the config changes; the bill does.
+
+So the settings page reads the live timescale and prints the real-time length beside every in-game duration it
+shows — each lens's interval and cooldown, its countdown to the next ask, the carry TTL, the resolution check, and
+every clock on the Carried page. The log names the timescale on the first snapshot and again whenever it moves, and
+quotes both units on every ask. A timescale of `0` — some mods freeze the clock that way — means no lens will ever
+come due, and both the Status page and the log say so outright rather than showing a countdown that never moves.
+
+The Lenses tab can also set the timescale, because it is the number the cadence sliders are denominated in. It is
+the *game's* setting, though — shared with every other mod and saved in the save file — so AgencyEngine writes it
+when you press the button and never stores it, never puts it back at load, and never fights whatever else set it.
+Below **7** the warning on that control is about Skyrim rather than about this mod: NPC packages stop completing,
+travel and shop restocking stall, and timer-driven mods drift.
+
 **The roster is not configuration.** Which lenses exist, what each is called, which prompt file it asks through and
 whether it produces proposals all come from the mod, because they describe prompt files that ship in the archive
 beside the DLL — there is nothing there a settings page could usefully let you author, and a prompt name that
