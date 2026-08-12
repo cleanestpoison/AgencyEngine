@@ -32,19 +32,20 @@ namespace AgencyEngine
     // handful of prose blocks, so the JSON contract and the hard constraints
     // cannot drift between them.
     //
-    // Selection happens here rather than in the template because a template
-    // cannot remember anything: a fresh roll per tick produces runs, and on a
-    // two-game-hour interval four aspiration turns running is most of an
-    // in-game day in one register. The Director knows what it picked last.
+    // Every lens runs on its own clock. There is no shared tick and no draw
+    // between them: asking two questions is not worse than asking one, it is
+    // just two asks, and lenses whose material accumulates at different rates
+    // have no business sharing one cadence knob. See docs/adr/0003.
     //
     // A lens is *content*, not configuration. Its name, its prompt file and its
     // proposal semantics are properties of a file that ships in the archive
     // beside the DLL — nobody can author them by typing into the settings page,
     // and a prompt name that doesn't resolve costs the whole impulse silently.
-    // Only `weight` and `ledgerSlots` are preferences. So the shipped roster is
-    // kBuiltinLenses below and the config file stores overrides against it,
-    // keyed by `id`. A lens added in a later release then appears on its own,
-    // with its shipped weight, in a config that already exists.
+    // Only the enable switch, the two cadence numbers and `ledgerSlots` are
+    // preferences. So the shipped roster is kBuiltinLenses below and the config
+    // file stores overrides against it, keyed by `id`. A lens added in a later
+    // release then appears on its own, at its shipped cadence, in a config that
+    // already exists.
     struct Lens
     {
         // Stable key, used only to match a config override to a shipped lens.
@@ -55,11 +56,32 @@ namespace AgencyEngine
         char id[32] = "";
         char name[64] = "";     // shown in the UI and written to the log
         char prompt[128] = "";  // resolves to prompts/<prompt>.prompt
-        // Relative weight. 0 disables the lens outright, which is also how you
-        // switch off a lens whose prompt depends on a mod you don't have —
-        // Inja resolves unknown decorators when it parses a file, so never
-        // dispatching it is the only reliable way to never parse it.
-        int  weight = 0;
+        // Is this lens asked at all? Off is how you switch off a lens whose
+        // prompt depends on a mod you don't have — Inja resolves unknown
+        // decorators when it *parses* a file, so never dispatching it is the
+        // only reliable way to never parse it.
+        //
+        // This replaced `weight`, which existed to decide which lens won a turn
+        // when they competed for one. They no longer compete, so the only job
+        // weight had left was *off* — and a bool says that without implying the
+        // other ninety-nine values mean anything.
+        bool  enabled = false;
+        // In-game minutes between asks. A quiet ask costs one interval; an ask
+        // that produces a carried impulse costs interval + cooldown.
+        //
+        // This is both the chattiness knob and the cost knob: a quiet ask is
+        // still an LLM call, and there is no tick behind it throttling anything,
+        // so lengthening the interval is the only way to make a lens cheaper.
+        float intervalGameMinutes = 120.0f;
+        // In-game minutes of silence *on top of* the interval once this lens's
+        // question has landed as a carried impulse.
+        //
+        // Keyed on carry rather than on her speaking it: speech can lag a carry
+        // indefinitely, and a lens gated on speech could re-ask about a subject
+        // she is already carrying. This is what makes the anti-nag structural —
+        // a lens cannot re-raise inside its cooldown because it is never asked,
+        // not because the prompt asks it nicely not to.
+        float cooldownGameMinutes = 480.0f;
         // Does this lens produce *proposals* rather than *topics*?
         //
         // A topic is met when someone answers it — agreeing, refusing, arguing
@@ -86,24 +108,25 @@ namespace AgencyEngine
     inline constexpr int kMaxLenses = 6;
 
     // The lens roster this build ships, and the source of every default in the
-    // table below. Changing a weight here changes it for every install that has
-    // not moved that slider — see Settings::Save, which writes only what differs
+    // table below. Changing a cadence here changes it for every install that has
+    // not moved that control — see Settings::Save, which writes only what differs
     // from the shipped value, so a default is not frozen by the act of opening
     // the settings page and saving something unrelated.
     //
-    // Weights: Activity takes the largest share because it has the most
-    // material — daily life happens every day, where an ignored aspiration or an
-    // unsaid standing has to accumulate first. Aspiration takes the smallest of
-    // the three now that its mundane appetites have moved to Activity, which is
-    // what stops the two of them competing for one register under two names.
+    // Cadence, in game hours (interval / cooldown): Aspiration 2/8 is the
+    // workhorse and asks often. Relationship's material — standing that has gone
+    // unsaid — accumulates over in-game days, so a long interval buys fewer quiet
+    // asks against the same data rather than more answers. Activity's danger is
+    // repeat-proposing ("spar with me" again tonight), so it takes much the
+    // longest cooldown of the three. See docs/adr/0003.
     //
     // Adding a row: give it an id that will never change (the ledger and the
     // config both key on it), and keep the count under kMaxLenses — the trailing
     // slots are what a user's own lenses occupy.
     inline constexpr Lens kBuiltinLenses[] = {
-        { "aspiration", "Aspiration", "agencyengine_impulse_aspiration", 35 },
-        { "relationship", "Relationship", "agencyengine_impulse_relationship", 25 },
-        { "activity", "Activity", "agencyengine_impulse_activity", 40, true, 3 },
+        { "aspiration", "Aspiration", "agencyengine_impulse_aspiration", true, 120.0f, 480.0f },
+        { "relationship", "Relationship", "agencyengine_impulse_relationship", true, 360.0f, 1440.0f },
+        { "activity", "Activity", "agencyengine_impulse_activity", true, 240.0f, 2880.0f, true, 3 },
     };
     inline constexpr int kBuiltinLensCount = static_cast<int>(std::size(kBuiltinLenses));
     static_assert(kBuiltinLensCount <= kMaxLenses, "the shipped roster has to fit in the table");
@@ -137,9 +160,11 @@ namespace AgencyEngine
     struct Settings
     {
         bool  enabled = true;
-        // Impulse cadence, measured in *in-game* minutes. 120 = every two game
-        // hours, which at the default timescale (20) is ~6 real minutes.
-        float intervalGameMinutes = 120.0f;
+        // No global interval any more: cadence is per lens, on Lens::
+        // intervalGameMinutes and cooldownGameMinutes. The Director still passes
+        // on its own schedule, but a pass only checks clocks — one where nothing
+        // is due makes no LLM calls at all. See docs/adr/0003.
+        //
         // How many recent SkyrimNet events to feed the prompt.
         int   maxEvents = 40;
         int   delivery = kDirectNarration;
@@ -164,9 +189,9 @@ namespace AgencyEngine
         // Read the two together. Unfiltered, this number is an event budget spent
         // as a thought budget and wants to be ~40 to reliably surface any. Filtered,
         // it means what it says, and 40 would be forty interior monologues per
-        // follower per tick.
+        // follower per ask.
         int   perFollowerEvents = 10;
-        // Percent chance, 0-100, that a tick is a *forced* impulse: the prompt
+        // Percent chance, 0-100, that an ask is a *forced* impulse: the prompt
         // drops the silence option entirely and someone has to speak up. The
         // rest of the time the model is free to return silence, and normally
         // will, because everything else in the prompt pushes it that way.
@@ -286,15 +311,15 @@ namespace AgencyEngine
         // something is pending.
         float quietPollSeconds = 1.0f;
 
-        // Per-tick trace lines (snapshot contents, gate evaluation, full
-        // context and response payloads). Off by default: the Director ticks
+        // Per-pass trace lines (snapshot contents, gate evaluation, full
+        // context and response payloads). Off by default: the Director passes
         // once a second, so this is the difference between a log you can read
         // and a log you have to grep.
         bool  debugLog = false;
 
         // Every impulse is asked through a lens; there is no general prompt
-        // behind them. Weighting them all to zero switches the loop off rather
-        // than falling back to anything, and the hold says so.
+        // behind them. Switching them all off stops the loop rather than falling
+        // back to anything, and the hold says so.
         //
         // The shipped roster, plus whatever the config overrode on top of it.
         // See kBuiltinLenses for why the roster lives in the build.
@@ -328,7 +353,7 @@ namespace AgencyEngine
         // each save so a user-supplied log always states the configuration the
         // rest of the log was produced under.
         std::string Summary() const;
-        // The enabled lenses and their weights, for the line above.
+        // The enabled lenses and their cadence, for the line above.
         std::string LensSummary() const;
     };
 

@@ -150,13 +150,13 @@ namespace AgencyEngine::PendingImpulses
     // and not discarded. They keep the shared ring they were written under: they
     // suppress whichever lens asks, and only another shared-ring record can
     // evict them. A lens with a small ring must never be able to drop them —
-    // that would lose, on the first tick after an upgrade, exactly what the
+    // that would lose, on the first pass after an upgrade, exactly what the
     // per-lens ring exists to protect. They leave one at a time, as their
     // subjects come round again and get rewritten under a real lens.
     //
     // A slot is written *provisional* at dispatch and decided when the entry
     // that owns it dies (see Disposition). Provisional slots suppress exactly
-    // like confirmed ones — the immediate next-tick repeat is what they are for
+    // like confirmed ones — the immediate next-ask repeat is what they are for
     // — but they are withdrawn rather than kept if the subject turns out never
     // to have been answered. At most one slot per character is provisional at a
     // time, because Set() allows only one pending entry per actor, so the cap
@@ -204,14 +204,14 @@ namespace AgencyEngine::PendingImpulses
     // split." are the same subject. An empty `lens` asks across every ring.
     bool LedgerSuppresses(std::uint32_t formID, std::string_view topic, std::string_view lens = {});
 
-    // Slots per character, republished by the Director every tick. Clear() needs
+    // Slots per character, republished by the Director every pass. Clear() needs
     // it — a subject confirmed settled while she was still carrying it unsaid has
     // no slot yet and gets one there — and Clear is called from places that have
     // no access to Settings.
     void SetLedgerCap(std::size_t cap);
 
     // Every configured lens and its slot count (0 = use the global one),
-    // republished with it by the Director each tick.
+    // republished with it by the Director each pass.
     //
     // It does two jobs. It is where Clear() gets a ring size from — Clear knows
     // which lens an entry came from but has no route to Settings. And it is what
@@ -219,7 +219,7 @@ namespace AgencyEngine::PendingImpulses
     // list belongs to no ring of its own and falls back to the shared one, which
     // is what stops a rename from stranding every subject that lens had settled.
     //
-    // Before the first tick publishes it the list is empty, so every slot reads
+    // Before the first pass publishes it the list is empty, so every slot reads
     // as shared. That is the pre-existing behaviour and the conservative
     // direction — more suppression, not less — and nothing dispatches an impulse
     // in that window anyway.
@@ -240,7 +240,7 @@ namespace AgencyEngine::PendingImpulses
 
     // The entry whose resolution check is due, if any, oldest check first. Call
     // MarkChecked as soon as the request is dispatched — not when it answers, or
-    // an unanswered check retries every tick.
+    // an unanswered check retries every pass.
     std::optional<Entry> NextDueForCheck(double nowGameDays, float intervalGameMinutes);
     void                 MarkChecked(std::uint32_t formID, double nowGameDays);
 
@@ -256,7 +256,7 @@ namespace AgencyEngine::PendingImpulses
 
     // Load-on-first-sight, save-when-dirty, both keyed off SkyrimNet's save ID.
     //
-    // Called every Director tick with the current save ID (empty when no save is
+    // Called on every Director pass with the current save ID (empty when no save is
     // loaded, which is a no-op). The first tick after a load sees an ID we have
     // not loaded for and reads it off disk, dropping anything already past its
     // TTL against the current game time. Doing it this way rather than from the

@@ -18,9 +18,9 @@ namespace AgencyEngine
         std::uint32_t formID = 0;
     };
 
-    // One turn of the impulse loop, kept for the UI's history list. A tick where
+    // One turn of the impulse loop, kept for the UI's history list. An ask where
     // nobody had anything to raise is recorded too, with delivery "silence" —
-    // an empty history and a history of twenty quiet ticks mean very different
+    // an empty history and a history of twenty quiet asks mean very different
     // things when you're tuning the prompt.
     struct Impulse
     {
@@ -44,6 +44,32 @@ namespace AgencyEngine
         std::string name;
         int         spoken = 0;
         int         quiet = 0;
+    };
+
+    // One lens's clock. Every lens asks on its own cadence and there is no
+    // shared tick behind them, so "when does the next thing happen" is a
+    // per-lens question — this is the whole of the Director's scheduling state.
+    //
+    // Written by the Director thread, and by the LLM callback on a SkyrimNet
+    // worker when an ask turns out to have produced a carry (which costs the
+    // cooldown on top of the interval). Read by the UI. Lives in Status rather
+    // than in a Director-thread static for exactly that reason: two threads
+    // write it and a third reads it.
+    struct LensClock
+    {
+        // Lens::id, or the prompt file for a lens someone wrote themselves.
+        // Deliberately not the name: the name is free text, and a row renamed on
+        // the Settings page must not silently rearm.
+        std::string key;
+        std::string name;
+        // No ask before this game time. Stamped at dispatch as ask + interval,
+        // and pushed out to ask + interval + cooldown if the ask carried.
+        double dueGameDays = 0.0;
+        // When the clock was last armed or asked. Only used to notice game time
+        // running backwards, which means an older save was loaded.
+        double armedGameDays = 0.0;
+        bool   asked = false;      // false = armed, never asked this session
+        bool   inFlight = false;   // an ask is outstanding
     };
 
     // One sample of "is anyone talking right now", from AgencyEngine_Bridge's
@@ -84,14 +110,16 @@ namespace AgencyEngine
         int    skyrimNetVersion = -1;
         bool   menuFrameworkPresent = false;
 
-        bool   inFlight = false;       // an LLM call is outstanding
-        bool   armed = false;          // lastFireGameDays is meaningful
-        double lastFireGameDays = 0.0;
+        bool   inFlight = false;       // at least one ask is outstanding
         int    impulsesThisSession = 0;
-        int    silencesThisSession = 0;  // ticks where nobody spoke up
+        int    silencesThisSession = 0;  // asks where nobody spoke up
         // Keyed by lens name, in first-use order. Short enough that a linear
         // scan beats a map, and the order is the one the UI wants anyway.
         std::vector<LensTally> lensTallies;
+        // One per configured lens, in roster order. Rebuilt by the Director as
+        // lenses are switched on and off, so a row that is no longer asked
+        // leaves rather than sitting there counting down to nothing.
+        std::vector<LensClock> lensClocks;
 
         // ---- SkyrimNet continuous scene mode, driven by combat -------------
         //

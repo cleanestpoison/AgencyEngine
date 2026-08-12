@@ -19,7 +19,7 @@ namespace AgencyEngine::Director
     void Start();
     void Stop();
 
-    // "Generate now" from the UI: fires on the next tick regardless of the
+    // "Generate now" from the UI: asks on the next pass regardless of the
     // interval and the requireFollower / skipInCombat gates.
     void RequestFireNow();
 
@@ -27,7 +27,7 @@ namespace AgencyEngine::Director
     void ResetTimer();
 
     // "Check this one now" from the UI: runs the resolution check against a
-    // pending impulse on the next tick, ignoring both the in-game cadence and a
+    // pending impulse on the next pass, ignoring both the in-game cadence and a
     // cadence of 0 (the check switched off). Queued rather than run inline —
     // the UI call arrives on the render thread, and the check needs the
     // Director's own thread to reach SkyrimNet's DB without stuttering a frame.

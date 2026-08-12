@@ -3,8 +3,8 @@
 
    A "lens" is one focused question the impulse loop can ask: is anyone's
    agenda being ignored (aspiration), is anything unsaid between these people
-   (relationship), and so on. The DLL picks a lens per tick and dispatches
-   that lens's prompt file; each lens file is a few dozen lines of
+   (relationship), and so on. Each lens runs on its own in-game clock in the
+   DLL, which dispatches that lens's prompt file when it comes due; each lens file is a few dozen lines of
    `{% raw %}{% extends %}{% endraw %}` plus block overrides, and everything else — the JSON
    contract, the constraints, the state dump, the forced-turn machinery —
    lives here so it cannot drift between lenses.
@@ -35,7 +35,7 @@
 
    It is a setting now — "Force someone to speak" on the Impulses tab of the
    AgencyEngine page, persisted as `forcedImpulseChance` in AgencyEngine.json —
-   and the DLL injects it into this context on every tick. Tune it there; the
+   and the DLL injects it into this context on every ask. Tune it there; the
    fallback below only applies when a DLL too old to send it renders this file.
 
      0   = never force. Purely the model's judgement (quietest).
@@ -43,10 +43,11 @@
      100 = every turn produces an impulse (loudest, and it will show — a forced
            impulse on a thin day is the weakest thing this prompt writes).
 
-   Raise this if the log shows nothing but quiet ticks; lower it if the
+   Raise this if the log shows nothing but quiet asks; lower it if the
    companions start sounding like they are on a schedule. It applies to every
-   lens; the per-lens spoken/quiet counters on the Status page are how you
-   tell whether one lens in particular is running dry.
+   lens and is rolled per ask, so several lenses coming due together roll it
+   several times; the per-lens spoken/quiet counters on the Lenses tab are how
+   you tell whether one lens in particular is running dry.
 
    The roll is suppressed outright while the party is mid-exchange
    (`tail_live`, set by the Director from the same quiet reading that defers

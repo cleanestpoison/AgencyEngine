@@ -12,11 +12,11 @@ namespace AgencyEngine
     // Rotation happens both on open and on size. On open, because the question
     // after a CTD is "what did the run that crashed do", and the run after it is
     // the one that opens the log — truncating on launch throws away the only
-    // copy. On size, because verbose tick logging left on overnight is otherwise
+    // copy. On size, because verbose pass logging left on overnight is otherwise
     // unbounded; 10 MB is a few hours of it and far more than any bug needs.
     //
-    // The level is trace, unconditionally: every per-tick line in the Director
-    // is *individually* gated on the "Verbose tick logging" setting instead, so
+    // The level is trace, unconditionally: every per-pass line in the Director
+    // is *individually* gated on the "Verbose pass logging" setting instead, so
     // the switch lives in one obvious place rather than being split between a
     // spdlog level and a settings flag. Flush-on-trace costs a little I/O but
     // means a CTD never eats the last few lines — which are the ones that

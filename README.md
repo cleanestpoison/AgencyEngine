@@ -18,12 +18,13 @@ works at the level of the whole playthrough rather than the party.
 
 ## What it does today
 
-Every N in-game minutes (default 120), if a follower is present and you're not in combat:
+Each **lens** asks on its own in-game clock (Aspiration every 2 game hours, Relationship every 6, Activity every 4),
+whenever a follower is present and you're not in combat:
 
 1. Pull the recent SkyrimNet event tail for the player and for each follower.
-2. Pick a **lens** — which question this tick asks — and render its prompt against that state, then send it to the
-   configured LLM. Three ship: *Aspiration* ("is anyone's agenda being ignored?"), *Relationship* ("is anything
-   unsaid between these people?") and *Activity* ("is there something they want to do with these people?").
+2. Render that lens's prompt against the state and send it to the configured LLM. Three ship: *Aspiration* ("is
+   anyone's agenda being ignored?"), *Relationship* ("is anything unsaid between these people?") and *Activity*
+   ("is there something they want to do with these people?").
 3. Read back a decision — `{"speaker", "target", "narration"}`, or `{"speaker": null}` for nobody.
 4. On a decision to speak, resolve the named speaker and target against the party and deliver the stage direction as
    **direct narration**, which gives that companion a speaking turn on the topic. They write their own line; the
@@ -34,8 +35,14 @@ Every N in-game minutes (default 120), if a follower is present and you're not i
    It generates asynchronously and so colours what they say from the *next* call onward, not the line they are
    about to deliver.
 
-**Most ticks produce silence, by design.** A companion who demands something every two hours is a nag; one who does
-it twice in a night is a person. The Status page counts spoken and quiet ticks separately so you can see the ratio.
+**Most asks produce silence, by design.** A companion who demands something every two hours is a nag; one who does
+it twice in a night is a person. The Lenses tab counts spoken and quiet asks separately, per lens, so you can see
+the ratio.
+
+An ask that *does* land costs its lens a **cooldown** on top of its interval — 8 game hours for Aspiration, 24 for
+Relationship, 48 for Activity — measured from the moment the impulse is recorded rather than from her saying it.
+That is what makes not nagging structural: a lens can't come back to a subject inside its cooldown, because it
+isn't asked.
 
 The target need not be the player. A companion raising something *with another companion* — an old grievance, an
 unsaid affection — is the one thing SkyrimNet's per-NPC loops structurally can't produce, because nothing else sees
@@ -44,9 +51,10 @@ the party as a party.
 Everything is visible and tunable in-game through the **SKSE Menu Framework** control panel, under a
 **Agency Engine** section with three pages:
 
-- **Status** — SkyrimNet connection, current followers, time to the next impulse, a spoken/quiet count per lens, and a
+- **Status** — SkyrimNet connection, current followers, each lens's countdown to its next ask, and a
   *Generate an impulse now* button.
-- **Settings** — interval, delivery mode, gating, how much context to feed the model, the lens list and weights, debug logging.
+- **Settings** — gating, delivery, how much context to feed the model, and the Lenses tab: a switch, an interval, a
+  cooldown and a slot count per lens, with its spoken/quiet count beside them.
 - **History** — the last 25 impulses with the lens each was asked under, plus the exact context JSON of the most recent dispatch.
 
 Settings persist to `Data/SKSE/Plugins/AgencyEngine.json` (press *Save settings*; they load on game start).
@@ -143,7 +151,7 @@ SkyrimNet and no LLM behind them, and both able to regress with no visible sympt
 
 - the **ledger**, which can quietly break an already-shipped lens (a companion simply stops raising things, days
   later, because another lens evicted her settled subjects);
-- the **config**, whose failures are *upgrade* failures — a weight set two versions ago silently reverting, a
+- the **config**, whose failures are *upgrade* failures — a cadence set two versions ago silently reverting, a
   retuned default never reaching an install that already exists, an old-format file losing what it meant. None of
   those appear in a log, and none are reproducible by hand once the old file has been overwritten.
 
@@ -250,11 +258,15 @@ A **lens** is one focused question the loop can ask. Rather than a single prompt
 thing at once and gets the easiest one back every time, each lens asks for one kind and is told to return silence
 when that kind isn't there.
 
-| Lens | Asks | Produces | Needs |
-|------|------|----------|-------|
-| Aspiration | Is anyone's agenda being ignored? An aspiration walked past, an errand stuck, an order of operations she disagrees with. | Topics | — |
-| Relationship | Is anything unsaid between these people? A settled view one companion has been carrying about another. | Topics | SeverActions, optional |
-| Activity | Is there something they want to *do* with these people? A drink, a round of sparring, a game, restlessness for a fight, an hour of somebody's company. | Proposals | — |
+| Lens | Asks | Produces | Cadence (game hours) | Needs |
+|------|------|----------|----------------------|-------|
+| Aspiration | Is anyone's agenda being ignored? An aspiration walked past, an errand stuck, an order of operations she disagrees with. | Topics | every 2, then quiet for 8 | — |
+| Relationship | Is anything unsaid between these people? A settled view one companion has been carrying about another. | Topics | every 6, then quiet for 24 | SeverActions, optional |
+| Activity | Is there something they want to *do* with these people? A drink, a round of sparring, a game, restlessness for a fight, an hour of somebody's company. | Proposals | every 4, then quiet for 48 | — |
+
+Aspiration is the workhorse and asks often. Relationship's material accumulates over in-game days, so a long
+interval buys fewer quiet asks against the same standing data rather than more answers. Activity's danger is
+repeat-proposing — "spar with me" again tonight — so it takes much the longest cooldown of the three.
 
 Aspiration deliberately does **not** own mundane appetites — rest, food, a bed, a drink. Those are Activity's, and
 leaving them in both would split one register across two names instead of asking two questions.
@@ -263,12 +275,13 @@ leaving them in both would split one register across two names instead of asking
 whether it produces proposals all come from the mod, because they describe prompt files that ship in the archive
 beside the DLL — there is nothing there a settings page could usefully let you author, and a prompt name that
 doesn't resolve costs the whole impulse and reads as a lens that is simply always quiet. What is yours is the
-**weight** and the **slot count**, and those are all the config file stores.
+**switch**, the **interval**, the **cooldown** and the **slot count**, and those are all the config file stores.
 
-So a lens added in a later version turns up on its own, at its shipped weight, in a settings file that already
-exists — and a lens whose prompt is fixed in a later version is fixed for you too. Weight 0 is how you switch one
-off; a version that has been upgraded from the old format keeps every weight you set, and any lens you had deleted
-outright comes back switched off rather than at its shipped weight.
+So a lens added in a later version turns up on its own, at its shipped cadence, in a settings file that already
+exists — and a lens whose prompt or cadence is retuned in a later version is retuned for you too, unless you moved
+that control yourself. Unticking a lens is how you switch one off; an install upgraded from the version before
+per-lens cadence keeps every lens it had switched off (a stored weight of 0 means exactly that), and any lens it had
+deleted outright comes back switched off rather than running.
 
 Lenses you write yourself are a separate list and are stored whole — see *Writing your own lens* below.
 
@@ -282,12 +295,13 @@ control flow and cross-template variable scope are the two parts of Inja inherit
 impulse on — a render error costs the whole call and fails as a blank prompt rather than as anything you'd notice.
 All branching is base-owned; lenses supply prose.
 
-**Selection is in the DLL, not the template.** Weights are edited on the Settings page and set the long-run mix; the
-lens that fired last is skipped while another is available, so two ticks never ask the same question in a row. That
-is the reason it isn't a `{% set roll = random %}`: a template can't remember anything, and an independent draw per
-tick produces runs — four aspiration turns straight is most of an in-game day in one register.
+**Cadence is in the DLL, not the template, and there is no selection left to make.** Each lens holds a game-time
+deadline; a pass of the Director checks the clocks and asks whatever is due, which is usually nothing. Two
+consecutive asks can't repeat a question for free — a lens is structurally unable to re-ask inside its own interval,
+because it isn't asked. Several clocks coming due together is ordinary and simply produces several asks; a template
+couldn't do any of this, because a template can't remember anything.
 
-**Weight 0 disables a lens**, which is the escape hatch for a lens whose prompt needs a mod you don't have.
+**Unticking a lens switches it off**, which is the escape hatch for a lens whose prompt needs a mod you don't have.
 
 The relationship lens is the one case of that, and it doesn't need the escape hatch: it calls SeverActions'
 `sever_player_blurb` and `sever_companion_opinions` decorators, and Inja resolves unknown functions when it
@@ -301,7 +315,7 @@ steady-state: the blurbs carry no timestamp and no delta, so they supply the *su
 per-lens spoken/quiet counters on the Status page are the readout — a lens that is silent 22 times out of 23 is an
 argument for tracked threads (tier 2), not for loosening its prompt.
 
-There is no general prompt behind the lenses. Weighting every lens to 0 doesn't fall back to anything — it stops
+There is no general prompt behind the lenses. Switching every lens off doesn't fall back to anything — it stops
 the loop, and the Status page says so rather than quietly asking a broader question.
 
 ### Topics and proposals
@@ -325,16 +339,16 @@ subject.
 
 There is a **shared ring** behind the per-lens ones, holding anything raised before the rings existed and anything
 raised by a lens that has since been renamed or deleted. Its slots suppress for every lens and are only ever
-evicted by another shared-ring slot — so a lens with three slots can't drop six settled subjects on the first tick
+evicted by another shared-ring slot — so a lens with three slots can't drop six settled subjects on the first ask
 after an upgrade, and renaming a row doesn't strand what it had already settled. They leave one at a time, as their
 subjects come round again and get rewritten under a live lens.
 
 ### Writing your own lens
 
 The blank rows at the bottom of the Lenses tab are yours. Fill in a name, a prompt file (which resolves to
-`Data/SKSE/Plugins/SkyrimNet/prompts/<name>.prompt` and must `{% extends %}` `agencyengine_impulse_base.prompt`), a
-weight, whether it produces proposals, and its slot count. Six lenses is the table's limit, of which three are the
-mod's own.
+`Data/SKSE/Plugins/SkyrimNet/prompts/<name>.prompt` and must `{% extends %}` `agencyengine_impulse_base.prompt`), an
+interval, a cooldown, whether it produces proposals, and its slot count. Six lenses is the table's limit, of which
+three are the mod's own.
 
 A lens you wrote has no shipped row behind it, so unlike the mod's own it is stored whole in the config file, under
 `customLenses` — nothing in an update can add to it, change it or take it away.

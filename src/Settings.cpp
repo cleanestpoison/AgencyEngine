@@ -43,14 +43,42 @@ namespace AgencyEngine
             return nullptr;
         }
 
-        // Only the two fields that are a preference. A lens's name, prompt file
-        // and proposal semantics come from the build every time — they describe
-        // a file in the archive, and a config that could contradict them would
+        // Only the fields that are a preference. A lens's name, prompt file and
+        // proposal semantics come from the build every time — they describe a
+        // file in the archive, and a config that could contradict them would
         // only ever be wrong about it.
+        //
+        // `weight` is read here rather than ignored with the other retired keys,
+        // because one value of it carried an instruction. Weight 0 was how an
+        // install said "never ask this" — the escape hatch for a lens whose
+        // prompt needs a mod that isn't installed — and silently re-enabling one
+        // of those would dispatch a prompt that fails to parse. Every other
+        // weight decided a draw that no longer happens, so it means nothing now
+        // and is dropped rather than guessed at.
         void ApplyOverride(Lens& lens, const nlohmann::json& entry)
         {
             if (entry.contains("weight")) {
-                lens.weight = std::max(entry.value("weight", lens.weight), 0);
+                if (entry.value("weight", 1) <= 0) {
+                    lens.enabled = false;
+                    logger::info("Settings: the {} lens was weighted 0, which used to mean 'never ask this' — it "
+                                 "stays switched off. Tick it on the Lenses tab if you want it back.",
+                                 lens.name[0] != '\0' ? lens.name : lens.id);
+                } else {
+                    logger::info("Settings: the {} lens still carries a weight. Lenses no longer compete for a "
+                                 "turn — each asks on its own interval — so the weight is ignored; its interval "
+                                 "and cooldown are on the Lenses tab.",
+                                 lens.name[0] != '\0' ? lens.name : lens.id);
+                }
+            }
+            if (entry.contains("enabled")) {
+                lens.enabled = entry.value("enabled", lens.enabled);
+            }
+            if (entry.contains("intervalGameMinutes")) {
+                lens.intervalGameMinutes =
+                    std::max(entry.value("intervalGameMinutes", lens.intervalGameMinutes), 1.0f);
+            }
+            if (entry.contains("cooldownGameMinutes")) {
+                lens.cooldownGameMinutes = std::max(entry.value("cooldownGameMinutes", lens.cooldownGameMinutes), 0.0f);
             }
             if (entry.contains("ledgerSlots")) {
                 lens.ledgerSlots = std::max(entry.value("ledgerSlots", lens.ledgerSlots), 0);
@@ -124,22 +152,25 @@ namespace AgencyEngine
                 }
                 AssignBuffer(slot->name, entry.value("name", std::string{}));
                 AssignBuffer(slot->prompt, prompt);
-                slot->weight = std::max(entry.value("weight", 0), 0);
+                // Weight is the only statement the old format made about whether
+                // a lens ran at all; the cadence it never had comes from the
+                // blank row's own defaults.
+                slot->enabled = entry.value("weight", 0) > 0;
                 slot->proposal = entry.value("proposal", false);
                 slot->ledgerSlots = std::max(entry.value("ledgerSlots", 0), 0);
                 custom.push_back(prompt);
             }
 
             // A shipped lens the old file didn't list is one the user deleted,
-            // and deleting was how the old page said "never ask this". Weight 0
-            // is how the new one says it, so that is what the intent becomes —
-            // rather than the lens reappearing at its shipped weight, which is
-            // the one outcome nobody who deleted a row is expecting.
+            // and deleting was how the old page said "never ask this". The
+            // enable switch is how the new one says it, so that is what the
+            // intent becomes — rather than the lens reappearing switched on,
+            // which is the one outcome nobody who deleted a row is expecting.
             for (auto& lens : table) {
                 if (lens.id[0] != '\0' && std::ranges::find(matched, lens.id) == matched.end()) {
-                    lens.weight = 0;
-                    logger::info("Settings: the {} lens was not in the old config, so it stays switched off "
-                                 "(weight 0). Raise it on the Lenses tab if you want it.",
+                    lens.enabled = false;
+                    logger::info("Settings: the {} lens was not in the old config, so it stays switched off. Tick "
+                                 "it on the Lenses tab if you want it.",
                                  lens.name);
                 }
             }
@@ -174,9 +205,49 @@ namespace AgencyEngine
                 }
                 AssignBuffer(slot->name, entry.value("name", std::string{}));
                 AssignBuffer(slot->prompt, prompt);
-                slot->weight = std::max(entry.value("weight", 0), 0);
+                // A lens someone wrote themselves is stored whole, so unlike a
+                // shipped row every field is read back from the file — including
+                // the two written under the old format, where `weight` above 0
+                // was the whole of "ask this one".
+                slot->enabled = entry.contains("enabled") ? entry.value("enabled", false)
+                                                          : entry.value("weight", 0) > 0;
+                slot->intervalGameMinutes =
+                    std::max(entry.value("intervalGameMinutes", slot->intervalGameMinutes), 1.0f);
+                slot->cooldownGameMinutes =
+                    std::max(entry.value("cooldownGameMinutes", slot->cooldownGameMinutes), 0.0f);
                 slot->proposal = entry.value("proposal", false);
                 slot->ledgerSlots = std::max(entry.value("ledgerSlots", 0), 0);
+            }
+        }
+
+        // Keys this build no longer reads. Named on load rather than dropped in
+        // silence: a number somebody set and can still see in their own config
+        // file, quietly doing nothing, is the worst of the three outcomes. They
+        // are never written back, so the first save after an upgrade is also the
+        // last time they are seen.
+        //
+        // One list, in one place, so the next thing to retire lands here rather
+        // than growing its own branch. Per-lens `weight` is handled in
+        // ApplyOverride instead, because weight 0 carried an instruction the
+        // keys below do not.
+        void NoteObsoleteKeys(const nlohmann::json& j)
+        {
+            struct Obsolete
+            {
+                const char* key;
+                const char* what;
+            };
+            static constexpr Obsolete kObsolete[] = {
+                { "intervalGameMinutes",
+                  "there is no shared impulse interval any more — each lens asks on its own interval and "
+                  "cooldown, on the Lenses tab" },
+            };
+            for (const auto& [key, what] : kObsolete) {
+                if (j.contains(key)) {
+                    logger::info("Settings: '{}' is no longer used — {}. It is ignored, and will not be written "
+                                 "back the next time you save.",
+                                 key, what);
+                }
             }
         }
     }
@@ -189,32 +260,31 @@ namespace AgencyEngine
             if (lens.prompt[0] == '\0') {
                 continue;
             }
-            // Weight 0 is now the only way a lens is switched off — the roster
-            // comes from the build, so there is no longer such a thing as a lens
-            // that isn't there. Named rather than omitted: "the Activity lens is
-            // installed and set to 0" and "this install predates the Activity
-            // lens" are different problems with the same symptom.
-            if (lens.weight <= 0) {
+            // A switched-off lens is named rather than omitted: "the Activity
+            // lens is installed and switched off" and "this install predates the
+            // Activity lens" are different problems with the same symptom.
+            if (!lens.enabled) {
                 off += off.empty() ? lens.name : std::format(", {}", lens.name);
                 continue;
             }
             if (!out.empty()) {
                 out += ", ";
             }
-            // Every per-lens field, not just the weight: a log someone sends in
+            // Every per-lens field, not just the cadence: a log someone sends in
             // has to describe the configuration it was produced under, and
             // "proposals, three slots" is the difference between a lens that
             // recurs and one that vetoes itself into silence.
-            out += std::format("{}({})={}{}{}", lens.name, lens.prompt, lens.weight,
+            out += std::format("{}({}) every {:.0f}+{:.0f} in-game min{}{}", lens.name, lens.prompt,
+                               lens.intervalGameMinutes, lens.cooldownGameMinutes,
                                lens.proposal ? " proposals" : "",
                                lens.ledgerSlots > 0 ? std::format(" slots={}", lens.ledgerSlots) : "");
         }
         // Worth spelling out rather than logging an empty list: every lens
-        // weighted to zero is a valid configuration that stops the loop
-        // entirely, and that is exactly the sort of thing someone reads their
-        // own log to discover.
+        // switched off is a valid configuration that stops the loop entirely,
+        // and that is exactly the sort of thing someone reads their own log to
+        // discover.
         if (out.empty()) {
-            return std::format("none usable — every lens is weighted 0 ({})", off);
+            return std::format("none usable — every lens is switched off ({})", off);
         }
         return off.empty() ? out : std::format("{}; off: {}", out, off);
     }
@@ -222,15 +292,14 @@ namespace AgencyEngine
     std::string Settings::Summary() const
     {
         return std::format(
-            "enabled={} interval={:.0f} in-game min delivery={} generateThought={} requireFollower={} "
+            "enabled={} delivery={} generateThought={} requireFollower={} "
             "skipInCombat={} playerEvents={} perFollowerEvents={} forcedImpulseChance={}% eventFilter='{}' "
             "lenses=[{}] "
             "deferOnConversation={} quiet={:.0f}s maxDefer={:.0f}s onExpiry={} injectQuietGap={} poll={:.1f}s "
             "verboseLog={} combatContinuousMode={} continuousExitGrace={:.0f}s pendingBioInjection={} "
             "pendingTtl={:.0f} in-game min pendingResolve={:.0f} in-game min "
             "followerEventFilter='{}' ledger={} slots={} veto={}",
-            enabled, intervalGameMinutes,
-            delivery == kDirectNarration ? "direct-narration" : "persistent-event", generateThought,
+            enabled, delivery == kDirectNarration ? "direct-narration" : "persistent-event", generateThought,
             requireFollower, skipInCombat, maxEvents, perFollowerEvents, forcedImpulseChance, eventTypeFilter,
             LensSummary(),
             deferOnConversation, quietSeconds, maxDeferSeconds,
@@ -261,8 +330,9 @@ namespace AgencyEngine
             nlohmann::json j;
             file >> j;
 
+            NoteObsoleteKeys(j);
+
             enabled = j.value("enabled", enabled);
-            intervalGameMinutes = j.value("intervalGameMinutes", intervalGameMinutes);
             maxEvents = j.value("maxEvents", maxEvents);
             delivery = j.value("delivery", delivery);
             generateThought = j.value("generateThought", generateThought);
@@ -346,7 +416,6 @@ namespace AgencyEngine
             };
 
             put("enabled", enabled, shipped.enabled);
-            put("intervalGameMinutes", intervalGameMinutes, shipped.intervalGameMinutes);
             put("maxEvents", maxEvents, shipped.maxEvents);
             put("delivery", delivery, shipped.delivery);
             put("generateThought", generateThought, shipped.generateThought);
@@ -373,7 +442,7 @@ namespace AgencyEngine
             put("followerEventTypeFilter", std::string{ followerEventTypeFilter },
                 std::string{ shipped.followerEventTypeFilter });
 
-            // Shipped lenses: the two tunable fields, and only where they were
+            // Shipped lenses: the four tunable fields, and only where they were
             // moved. Everything else about a lens is the prompt file's business.
             nlohmann::json lensOverrides = nlohmann::json::object();
             for (const auto& lens : lenses) {
@@ -382,8 +451,14 @@ namespace AgencyEngine
                     continue;
                 }
                 nlohmann::json entry = nlohmann::json::object();
-                if (lens.weight != builtin->weight) {
-                    entry["weight"] = lens.weight;
+                if (lens.enabled != builtin->enabled) {
+                    entry["enabled"] = lens.enabled;
+                }
+                if (lens.intervalGameMinutes != builtin->intervalGameMinutes) {
+                    entry["intervalGameMinutes"] = lens.intervalGameMinutes;
+                }
+                if (lens.cooldownGameMinutes != builtin->cooldownGameMinutes) {
+                    entry["cooldownGameMinutes"] = lens.cooldownGameMinutes;
                 }
                 if (lens.ledgerSlots != builtin->ledgerSlots) {
                     entry["ledgerSlots"] = lens.ledgerSlots;
@@ -407,7 +482,9 @@ namespace AgencyEngine
                 customLenses.push_back(nlohmann::json{
                     { "name", std::string{ lens.name } },
                     { "prompt", std::string{ lens.prompt } },
-                    { "weight", lens.weight },
+                    { "enabled", lens.enabled },
+                    { "intervalGameMinutes", lens.intervalGameMinutes },
+                    { "cooldownGameMinutes", lens.cooldownGameMinutes },
                     { "proposal", lens.proposal },
                     { "ledgerSlots", lens.ledgerSlots },
                 });

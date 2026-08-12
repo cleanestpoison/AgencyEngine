@@ -339,7 +339,7 @@ namespace AgencyEngine::PapyrusBridge
 
         if (!ok) {
             // Logged on change only, by the caller — a refused poll repeats
-            // every tick and would otherwise fill the file.
+            // on every pass and would otherwise fill the file.
             static bool complained = false;
             if (!complained) {
                 complained = true;

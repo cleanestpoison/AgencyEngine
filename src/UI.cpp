@@ -75,15 +75,25 @@ namespace AgencyEngine::UI
                                    state.deliveryHeldSeconds, settings.maxDeferSeconds);
             } else if (!state.holdReason.empty()) {
                 ImGui::TextColored(kWarn, "Holding: %s", state.holdReason.c_str());
-            } else if (state.armed) {
-                const double elapsedMinutes = (state.snapshot.gameDays - state.lastFireGameDays) * 24.0 * 60.0;
-                const double remaining = settings.intervalGameMinutes - elapsedMinutes;
-                ImGui::TextColored(kGood, "Running - next impulse in %.0f in-game minutes (interval %.0f).",
-                                   remaining < 0.0 ? 0.0 : remaining, settings.intervalGameMinutes);
+            } else if (state.lensClocks.empty()) {
+                ImGui::TextColored(kGood, "%s", "Running - the lens clocks arm on the next pass.");
             } else {
-                ImGui::TextColored(kGood, "%s", "Running - the countdown starts with the next tick.");
+                ImGui::TextColored(kGood, "%s", "Running - every lens is counting down on its own clock.");
             }
             ImGui::PopTextWrapPos();
+
+            // Each lens's own countdown. There is no shared interval any more,
+            // so "when does the next thing happen" has as many answers as there
+            // are lenses, and one number here would be a fiction.
+            for (const auto& clock : state.lensClocks) {
+                const double minutes = (clock.dueGameDays - state.snapshot.gameDays) * 24.0 * 60.0;
+                if (clock.inFlight) {
+                    ImGui::TextDisabled("    %s - asking now", clock.name.c_str());
+                } else {
+                    ImGui::TextDisabled("    %s - asks in %.0f in-game minutes", clock.name.c_str(),
+                                        minutes < 0.0 ? 0.0 : minutes);
+                }
+            }
 
             // Both actions are things you reach for *because* of the line
             // above, so they belong next to it rather than past a scroll.
@@ -144,14 +154,14 @@ namespace AgencyEngine::UI
             ImGui::SeparatorText("This session");
             ImGui::Text("%d spoken, %d quiet", state.impulsesThisSession, state.silencesThisSession);
             // The per-lens split lives on the Lenses settings tab now, next to
-            // the weights it is evidence for.
+            // the cadence it is evidence for.
             if (!state.lensTallies.empty()) {
                 ImGui::TextDisabled("%s", "Per-lens split is on Settings > Lenses.");
             }
 
             // A count only. The list, and everything you can do to it, is its
             // own page — same arrangement as the per-lens tallies, which moved
-            // next to the weights they are evidence for.
+            // next to the cadence they are evidence for.
             if (settings.pendingBioInjection) {
                 ImGui::SeparatorText("Carried, unsaid");
                 if (state.pendingImpulses.empty()) {
@@ -192,33 +202,29 @@ namespace AgencyEngine::UI
         void RenderImpulsesTab(Settings& s, bool& dirty)
         {
             dirty |= ImGui::Checkbox("Enabled", &s.enabled);
-            HelpMarker("Master switch. Off, the loop still ticks but never fires.");
-
-            dirty |= ImGui::SliderFloat("Interval (in-game minutes, default 120)", &s.intervalGameMinutes, 5.0f,
-                                        1440.0f, "%.0f");
-            HelpMarker("How much in-game time passes between impulses. Measured in game time, so it\n"
-                       "stretches and compresses with the timescale rather than with the clock.");
-            ImGui::TextDisabled("= %.1f in-game hours (~%.0f real minutes at timescale 20).",
-                                s.intervalGameMinutes / 60.0f, s.intervalGameMinutes / 20.0f);
+            HelpMarker("Master switch. Off, the loop still passes but no lens is ever asked.");
+            Note("How often each lens is asked is on the Lenses tab - every lens has its own interval and its "
+                 "own cooldown, and there is no shared one behind them.");
 
             dirty |= ImGui::Checkbox("Only when a follower is present", &s.requireFollower);
             HelpMarker("This mod is about companions. With nobody following, there is nobody to speak up.");
 
-            dirty |= ImGui::SliderInt("Force someone to speak (% of ticks, default 20)", &s.forcedImpulseChance, 0,
+            dirty |= ImGui::SliderInt("Force someone to speak (% of asks, default 20)", &s.forcedImpulseChance, 0,
                                       100);
-            HelpMarker("On a forced tick the prompt loses the silence option entirely and someone has to\n"
+            HelpMarker("On a forced ask the prompt loses the silence option entirely and someone has to\n"
                        "speak up. The rest of the time the model may return silence, and normally will.\n"
-                       "Applies to every lens.\n"
+                       "Applies to every lens, and is rolled per ask - so several lenses coming due together\n"
+                       "roll it several times.\n"
                        "Never forced while the party is mid-exchange - forcing a turn into a live scene is\n"
                        "where this prompt writes its worst output.");
             if (s.forcedImpulseChance <= 0) {
                 ImGui::TextDisabled("%s", "Never forced - purely the model's judgement, and the quietest setting.");
             } else if (s.forcedImpulseChance >= 100) {
                 ImGui::TextColored(kWarn, "%s",
-                                   "Every quiet tick speaks - and it shows. A forced impulse on a thin day is the "
+                                   "Every ask speaks - and it shows. A forced impulse on a thin day is the "
                                    "weakest thing this prompt writes.");
             }
-            Note("The per-lens 'N spoken, M quiet' counters on the Status page are the readout: raise this if "
+            Note("The per-lens 'N spoken, M quiet' counters on the Lenses tab are the readout: raise this if "
                  "it is all quiet, lower it if the companions start sounding scheduled.");
 
             dirty |= ImGui::Checkbox("Also generate a private thought (second LLM call)", &s.generateThought);
@@ -327,7 +333,7 @@ namespace AgencyEngine::UI
         void RenderCombatTab(Settings& s, bool& dirty)
         {
             dirty |= ImGui::Checkbox("Skip impulses while in combat", &s.skipInCombat);
-            HelpMarker("An unprompted aside lands badly mid-fight. The countdown keeps running; the tick is\n"
+            HelpMarker("An unprompted aside lands badly mid-fight. Every lens clock keeps running; the ask is\n"
                        "declined.");
 
             ImGui::SeparatorText("Hand the fight to SkyrimNet instead");
@@ -348,33 +354,34 @@ namespace AgencyEngine::UI
             ImGui::EndDisabled();
         }
 
-        void RenderLensesTab(Settings& s, bool& dirty, const std::vector<LensTally>& tallies)
+        void RenderLensesTab(Settings& s, bool& dirty, const std::vector<LensTally>& tallies,
+                             const std::vector<LensClock>& clocks, double nowGameDays)
         {
             Note("Every impulse is asked through a lens: a prompt that inherits "
-                 "agencyengine_impulse_base.prompt and asks for one kind of thing. The chosen lens never "
-                 "repeats twice running while another is available, so weights set the long-run mix rather "
-                 "than each individual tick.");
-            Note("Weight 0 disables a lens outright - which is also how you switch off a lens whose prompt "
-                 "needs a mod you do not have installed.");
+                 "agencyengine_impulse_base.prompt and asks for one kind of thing. Each lens asks on its own "
+                 "clock - they do not take turns and they do not compete, because asking two questions is "
+                 "not worse than asking one.");
+            Note("Interval is how long a lens waits between asks, and it is both the chattiness knob and the "
+                 "cost knob: an ask that comes back silent - which most do, by design - is still an LLM call. "
+                 "Cooldown is the extra silence a lens takes once its question has actually landed as "
+                 "something she is carrying, whether or not she has said it yet. That is what stops a lens "
+                 "nagging: it cannot re-raise inside its cooldown, because it is never asked.");
+            Note("Unticking a lens switches it off outright - which is also how you switch off a lens whose "
+                 "prompt needs a mod you do not have installed.");
             Note("The mod's own lenses are shown greyed: their name, prompt file and kind come from the mod, so "
-                 "an update can add one or fix one and you keep your weights. Only the weight and the slot count "
-                 "are yours, and only those are written to the config file. The blank rows at the bottom are for "
-                 "a prompt you wrote yourself.");
+                 "an update can add one or fix one and you keep your cadence. Only the switch, the two clocks "
+                 "and the slot count are yours, and only those are written to the config file. The blank rows "
+                 "at the bottom are for a prompt you wrote yourself.");
 
-            int total = 0;
-            for (const auto& lens : s.lenses) {
-                if (lens.prompt[0] != '\0') {
-                    total += lens.weight > 0 ? lens.weight : 0;
-                }
-            }
-
-            if (ImGui::BeginTable("lenses", 7,
+            if (ImGui::BeginTable("lenses", 9,
                                   ImGuiMCP::ImGuiTableFlags_Borders | ImGuiMCP::ImGuiTableFlags_RowBg |
                                       ImGuiMCP::ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Ask", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 0.3f);
                 ImGui::TableSetupColumn("Name", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 0.9f);
-                ImGui::TableSetupColumn("Prompt file", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 1.6f);
-                ImGui::TableSetupColumn("Weight", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 1.0f);
-                ImGui::TableSetupColumn("Share", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 0.5f);
+                ImGui::TableSetupColumn("Prompt file", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 1.4f);
+                ImGui::TableSetupColumn("Interval", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                ImGui::TableSetupColumn("Cooldown", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                ImGui::TableSetupColumn("Next ask", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 0.8f);
                 ImGui::TableSetupColumn("Proposals", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 0.5f);
                 ImGui::TableSetupColumn("Slots", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 0.6f);
                 ImGui::TableSetupColumn("This session", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 0.9f);
@@ -396,6 +403,14 @@ namespace AgencyEngine::UI
                     ImGui::PushID(i);
                     ImGui::TableNextRow();
 
+                    // The whole of "does this lens run". No weight behind it:
+                    // lenses no longer compete for a turn, so the only question
+                    // left about one is whether it is asked at all.
+                    ImGui::TableNextColumn();
+                    ImGui::BeginDisabled(lens.prompt[0] == '\0');
+                    dirty |= ImGui::Checkbox("##enabled", &lens.enabled);
+                    ImGui::EndDisabled();
+
                     ImGui::TableNextColumn();
                     if (shipped) {
                         ImGui::TextDisabled("%s", lens.name);
@@ -412,18 +427,39 @@ namespace AgencyEngine::UI
                         dirty |= ImGui::InputText("##prompt", lens.prompt, sizeof(lens.prompt));
                     }
 
+                    // In-game minutes, like every other clock in this mod, but
+                    // shown in hours underneath: nobody thinks about a
+                    // relationship lens in units of 1440 minutes.
                     ImGui::TableNextColumn();
                     ImGui::SetNextItemWidth(-1.0f);
-                    dirty |= ImGui::SliderInt("##weight", &lens.weight, 0, 100);
+                    dirty |= ImGui::SliderFloat("##interval", &lens.intervalGameMinutes, 15.0f, 2880.0f,
+                                                "%.0f min");
+                    ImGui::TextDisabled("%.1f h", lens.intervalGameMinutes / 60.0f);
 
-                    // Weights only mean anything relative to each other, and
-                    // the arithmetic is exactly what someone gets wrong when
-                    // they bump one row from 50 to 60.
                     ImGui::TableNextColumn();
-                    if (lens.prompt[0] == '\0' || lens.weight <= 0) {
-                        ImGui::TextDisabled("%s", "off");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    dirty |= ImGui::SliderFloat("##cooldown", &lens.cooldownGameMinutes, 0.0f, 5760.0f,
+                                                lens.cooldownGameMinutes <= 0.0f ? "none" : "%.0f min");
+                    ImGui::TextDisabled("%.1f h", lens.cooldownGameMinutes / 60.0f);
+
+                    // Read straight off the Director's clock, because a cadence
+                    // you cannot watch running is a cadence nobody can tune. A
+                    // row with no clock is one that is switched off, or one the
+                    // Director has not passed over yet.
+                    ImGui::TableNextColumn();
+                    const auto clock = std::find_if(clocks.begin(), clocks.end(), [&](const LensClock& c) {
+                        return c.key == (lens.id[0] != '\0' ? std::string_view{ lens.id }
+                                                            : std::string_view{ lens.prompt });
+                    });
+                    if (lens.prompt[0] == '\0') {
+                        ImGui::TextDisabled("%s", "-");
+                    } else if (clock == clocks.end()) {
+                        ImGui::TextDisabled("%s", lens.enabled ? "arming" : "off");
+                    } else if (clock->inFlight) {
+                        ImGui::TextColored(kGood, "%s", "asking now");
                     } else {
-                        ImGui::Text("%.0f%%", total > 0 ? 100.0 * lens.weight / total : 0.0);
+                        const double minutes = (clock->dueGameDays - nowGameDays) * 24.0 * 60.0;
+                        ImGui::Text("%.0f min", minutes < 0.0 ? 0.0 : minutes);
                     }
 
                     // Declared, never inferred from the name above — which is a
@@ -463,6 +499,9 @@ namespace AgencyEngine::UI
             }
 
             HelpMarker("Each prompt file resolves to Data/SKSE/Plugins/SkyrimNet/prompts/<name>.prompt");
+            Note("Next ask counts down in in-game minutes, so it stretches and compresses with the timescale "
+                 "rather than with the clock. Several lenses coming due at once is ordinary and simply "
+                 "produces several asks.");
             Note("Proposals: tick this for a lens that asks the party to DO something together - a drink, a "
                  "round of sparring, a game. Agreement does not settle a proposal; only the thing happening, or "
                  "a plain refusal, does. 'Sure' followed by nothing is a deferral, and she keeps carrying it.");
@@ -471,27 +510,32 @@ namespace AgencyEngine::UI
                  "release what another one settled. A lens drawing on a small vocabulary - activities, where "
                  "there are perhaps ten - wants a small number, or it holds its whole repertoire and goes "
                  "quiet.");
-            if (total <= 0) {
+            const bool anyEnabled = std::any_of(std::begin(s.lenses), std::end(s.lenses), [](const Lens& lens) {
+                return lens.enabled && lens.prompt[0] != '\0';
+            });
+            if (!anyEnabled) {
                 ImGui::TextColored(kWarn, "%s",
-                                   "Every lens is weighted 0 - there is nothing to ask, so no impulse fires.");
+                                   "Every lens is switched off - there is nothing to ask, so no impulse fires.");
             }
 
             // Worth a button rather than "delete the config file": the file
             // holds the rest of the settings too, and someone who has spent an
-            // evening on the weights is exactly who wants them back without
-            // losing their interval and their event filters.
+            // evening on the cadence is exactly who wants it back without
+            // losing their event filters.
             if (ImGui::Button("Restore the mod's lens defaults")) {
                 for (int i = 0; i < kMaxLenses; ++i) {
                     const auto* builtin = BuiltinLensFor(s.lenses[i].id);
                     if (builtin) {
-                        s.lenses[i].weight = builtin->weight;
+                        s.lenses[i].enabled = builtin->enabled;
+                        s.lenses[i].intervalGameMinutes = builtin->intervalGameMinutes;
+                        s.lenses[i].cooldownGameMinutes = builtin->cooldownGameMinutes;
                         s.lenses[i].ledgerSlots = builtin->ledgerSlots;
                     }
                 }
                 dirty = true;
             }
-            HelpMarker("Puts every weight and slot count back to what this version of the mod ships.\n"
-                       "Lenses you added yourself are left alone.");
+            HelpMarker("Puts every switch, interval, cooldown and slot count back to what this version of the\n"
+                       "mod ships. Lenses you added yourself are left alone.");
         }
 
         void RenderContextTab(Settings& s, bool& dirty)
@@ -508,7 +552,7 @@ namespace AgencyEngine::UI
                        "thousand tokens of interior monologue in every prompt.");
             if (s.followerEventTypeFilter[0] != '\0' && s.perFollowerEvents > 20) {
                 ImGui::TextColored(kWarn, "%s",
-                                   "Filtered AND high: that is this many thoughts per follower, every tick.");
+                                   "Filtered AND high: that is this many thoughts per follower, every ask.");
             }
             dirty |= ImGui::InputText("Event type filter", s.eventTypeFilter, sizeof(s.eventTypeFilter));
             HelpMarker("Comma-separated SkyrimNet event types; empty = every type.");
@@ -529,10 +573,10 @@ namespace AgencyEngine::UI
                        "interval, running continuously while either conversation feature is on.");
             ImGui::EndDisabled();
 
-            dirty |= ImGui::Checkbox("Verbose tick logging", &s.debugLog);
-            HelpMarker("Adds per-tick snapshot lines and full context/response payloads to\n"
+            dirty |= ImGui::Checkbox("Verbose pass logging", &s.debugLog);
+            HelpMarker("Adds per-pass snapshot lines and full context/response payloads to\n"
                        "Documents/My Games/Skyrim Special Edition/SKSE/AgencyEngine.log.\n"
-                       "The Director ticks once a second, so this is the difference between a log you can\n"
+                       "The Director passes once a second, so this is the difference between a log you can\n"
                        "read and one you have to grep. The two previous logs are kept alongside it as\n"
                        "AgencyEngine.log.1 and AgencyEngine.log.2.");
 
@@ -565,7 +609,13 @@ namespace AgencyEngine::UI
 
             // Copied before g_settingsLock is taken: two locks, never nested.
             std::vector<LensTally> tallies;
-            WithState([&](Status& state) { tallies = state.lensTallies; });
+            std::vector<LensClock> clocks;
+            double                 nowGameDays = 0.0;
+            WithState([&](Status& state) {
+                tallies = state.lensTallies;
+                clocks = state.lensClocks;
+                nowGameDays = state.snapshot.gameDays;
+            });
 
             {
                 std::scoped_lock lock{ g_settingsLock };
@@ -585,7 +635,7 @@ namespace AgencyEngine::UI
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Lenses")) {
-                        RenderLensesTab(s, dirty, tallies);
+                        RenderLensesTab(s, dirty, tallies, clocks, nowGameDays);
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Context")) {
@@ -874,7 +924,7 @@ namespace AgencyEngine::UI
                 if (ImGui::Button("Forget this")) {
                     // Takes PendingImpulses' own lock, not the Status one, so
                     // this is safe from the render thread. The Status mirror is
-                    // rebuilt on the Director's next tick; erase it here too so
+                    // rebuilt on the Director's next pass; erase it here too so
                     // the row goes away on this frame rather than in a second.
                     PendingImpulses::Clear(entry.formID, "cleared by hand from the UI");
                     const auto formID = entry.formID;

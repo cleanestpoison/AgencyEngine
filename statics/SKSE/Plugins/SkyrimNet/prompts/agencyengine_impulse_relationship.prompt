@@ -11,8 +11,8 @@
    REQUIRES SeverActions — the base's "Where X stands with..." section calls
    its `sever_player_blurb` / `sever_companion_opinions` decorators, and Inja
    resolves unknown functions at parse time. Without SeverActions installed,
-   set this lens's weight to 0 on the Settings page; the file is then never
-   dispatched and never parsed.
+   untick this lens on the Lenses tab; the file is then never dispatched and
+   never parsed.
 
    Expect this lens to be quieter than the aspiration one, and expect that to
    be honest rather than broken. Standing is steady-state — the blurbs carry

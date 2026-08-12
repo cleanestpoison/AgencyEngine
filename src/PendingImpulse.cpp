@@ -25,11 +25,11 @@ namespace AgencyEngine::PendingImpulses
         // Slots per character. Kept here rather than threaded through Clear()
         // because Clear is called from six places that have no business knowing
         // about Settings — the UI, the TTL sweep, the restore check — and only
-        // one of them could supply it. The Director republishes it every tick.
+        // one of them could supply it. The Director republishes it every pass.
         std::atomic<std::size_t> g_cap{ 6 };
 
         // The configured lenses, republished alongside it. Under its own lock
-        // rather than g_lock: it is written from the Director's tick and read
+        // rather than g_lock: it is written from the Director's pass and read
         // from every LedgerRecord, and folding it into g_lock would have a
         // settings republish queue behind a decorator's ledger read.
         std::mutex            g_ringLock;
@@ -83,7 +83,7 @@ namespace AgencyEngine::PendingImpulses
         // Does a slot suppress a subject for `lens`? Its own ring does, and the
         // shared ring does for everybody — a subject settled before the rings
         // existed is settled for whoever asks, and the alternative is a
-        // companion repeating herself on the first tick after an upgrade.
+        // companion repeating herself on the first pass after an upgrade.
         bool SuppressesFor(std::string_view slotRing, std::string_view ring)
         {
             return slotRing.empty() || ring.empty() || slotRing == ring;
@@ -232,7 +232,7 @@ namespace AgencyEngine::PendingImpulses
                     saves = nlohmann::json::object();
                 }
 
-                // A write counter rather than a timestamp: Director ticks give
+                // A write counter rather than a timestamp: Director passes give
                 // us no wall clock we would trust across sessions, and all this
                 // has to do is order the saves for pruning.
                 const auto seq = root.value("seq", 0ull) + 1ull;
@@ -289,7 +289,7 @@ namespace AgencyEngine::PendingImpulses
                 g_lastWriteMs = NowMs();
                 logger::debug("Pending impulses: wrote {} entr(ies) for save '{}'", g_entries.size(), g_loadedSaveId);
             } catch (const std::exception& e) {
-                // Don't clear the dirty flag: the next tick will try again, and
+                // Don't clear the dirty flag: the next pass will try again, and
                 // a transient failure (the file open in an editor) should not
                 // silently drop the state.
                 logger::error("Pending impulses: failed to write {}: {}", path.string(), e.what());
@@ -362,7 +362,7 @@ namespace AgencyEngine::PendingImpulses
         std::scoped_lock lock{ g_lock };
         const auto* entry = FindLocked(formID);
         // An unverified entry is withheld rather than rendered. It is one
-        // Director tick from being either confirmed or dropped, and rendering a
+        // Director pass from being either confirmed or dropped, and rendering a
         // possibly-misattributed agenda into somebody's bio is the one failure
         // this whole design exists to avoid.
         if (!entry || entry->unverified) {
@@ -461,7 +461,7 @@ namespace AgencyEngine::PendingImpulses
         //
         // Membership is an exact ring match, so the shared ring is *not* counted
         // here: a lens with three slots must not be able to drop six legacy
-        // subjects on its first record, which would lose on the tick after an
+        // subjects on its first record, which would lose on the pass after an
         // upgrade precisely what this is meant to protect. The shared ring is
         // only ever thinned by a shared-ring record.
         //

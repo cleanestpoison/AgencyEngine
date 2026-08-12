@@ -24,13 +24,13 @@ namespace AgencyEngine::Director
         // variant and can be pointed at a much cheaper model than the impulse.
         constexpr auto kResolvePrompt = "agencyengine_impulse_resolved";
         constexpr auto kResolveVariant = "agencyengine_resolve";
-        constexpr auto kTickInterval = 1s;
+        constexpr auto kPassInterval = 1s;
         // A snapshot older than this means the main thread isn't running our
         // tasks (main menu, loading screen, hard stall) — don't act on it.
         constexpr auto kSnapshotMaxAge = 5s;
         // How long the player has to have been back — window focused, no menu,
         // frames running — before anything dispatches or is delivered. Without
-        // it, an impulse held across a suspend lands within one tick of the
+        // it, an impulse held across a suspend lands within one pass of the
         // window reappearing, which reads as the mod having waited to ambush
         // them. Long enough to have your hands back on the keyboard.
         constexpr auto kResumeSettle = 10s;
@@ -42,7 +42,7 @@ namespace AgencyEngine::Director
         // stop running and the snapshot goes stale — the game is suspended and
         // we cannot see it. Everything real-time in this file (the defer clock,
         // the quiet reading's age, SkyrimNet's audio and dialogue counters)
-        // keeps running through that, so on the first tick back the party reads
+        // keeps running through that, so on the first pass back the party reads
         // as maximally quiet and a held impulse fires immediately. That is the
         // "narration the moment I alt-tab in" symptom; a stale snapshot has to
         // count as suspended for it, not merely stop us reading.
@@ -54,7 +54,6 @@ namespace AgencyEngine::Director
         std::thread      g_thread;
         std::atomic_bool g_running{ false };
         std::atomic_bool g_fireNow{ false };
-        std::atomic_bool g_inFlight{ false };
         // Set on a load/new game. Combat state, and our belief about who owns
         // continuous mode, do not survive one.
         std::atomic_bool g_continuousReset{ false };
@@ -113,7 +112,7 @@ namespace AgencyEngine::Director
             std::uint32_t formID = 0;
         };
 
-        // What the model decided this tick. `speak` false is the ordinary
+        // What the model decided for one ask. `speak` false is the ordinary
         // answer: nobody had anything worth interrupting the day for.
         struct Decision
         {
@@ -254,19 +253,53 @@ namespace AgencyEngine::Director
             return minutes == 1 ? std::string{ "about a minute" } : std::format("about {} minutes", minutes);
         }
 
-        // The lens chosen for one tick: which question gets asked, and which
-        // prompt file asks it.
+        // One lens, resolved out of the settings for a pass: which question gets
+        // asked, which prompt file asks it, and how long the clock runs.
         struct LensChoice
         {
+            // Lens::id, or the prompt file for a hand-authored lens. What the
+            // clock in Status is keyed on.
+            std::string key;
             std::string name;    // as typed in the UI; may be blank
-            std::string prompt;  // never empty — a tick with no usable lens holds
+            std::string prompt;  // never empty — a lens without one is not usable
             // The two declared properties that decide what happens to the
             // impulse afterwards. Carried from the settings row rather than
             // matched on the name later, because the name is the one field the
             // user can edit freely.
             bool        proposal = false;
             int         ledgerSlots = 0;
+            // This lens's own cadence. A quiet ask costs the interval; an ask
+            // that carries costs interval + cooldown.
+            float       intervalGameMinutes = 120.0f;
+            float       cooldownGameMinutes = 0.0f;
         };
+
+        double GameMinutesToDays(float minutes)
+        {
+            return static_cast<double>(minutes) / (24.0 * 60.0);
+        }
+
+        std::string LensKey(const Lens& lens)
+        {
+            return lens.id[0] != '\0' ? std::string{ lens.id } : std::string{ lens.prompt };
+        }
+
+        // Every lens this pass is allowed to ask. A lens needs a prompt file and
+        // its enable switch; with none of them usable there is nothing to ask at
+        // all, and the pass holds rather than falling back to a general prompt.
+        std::vector<LensChoice> UsableLenses(const Settings& settings)
+        {
+            std::vector<LensChoice> out;
+            for (const auto& lens : settings.lenses) {
+                if (!lens.enabled || lens.prompt[0] == '\0') {
+                    continue;
+                }
+                out.push_back(LensChoice{ LensKey(lens), lens.name, lens.prompt, lens.proposal, lens.ledgerSlots,
+                                          std::max(lens.intervalGameMinutes, 1.0f),
+                                          std::max(lens.cooldownGameMinutes, 0.0f) });
+            }
+            return out;
+        }
 
         // ---- main thread -------------------------------------------------
 
@@ -345,7 +378,7 @@ namespace AgencyEngine::Director
         }
 
         // Touches only shared state, so unlike the rest of this section it is
-        // called from the SkyrimNet worker too — a silent tick never reaches
+        // called from the SkyrimNet worker too — a quiet ask never reaches
         // the main thread at all.
         void RecordImpulse(Impulse impulse, bool countAsSpoken)
         {
@@ -542,7 +575,7 @@ namespace AgencyEngine::Director
                 // stop existing here — it stops being *unsaid*. Whatever she was
                 // carrying is superseded by what she actually said (Set replaces
                 // per actor), now marked spoken, and the topic takes a
-                // provisional ledger slot so the next tick does not propose it
+                // provisional ledger slot so the next ask does not propose it
                 // straight back.
                 if (ok) {
                     RecordSpokenImpulse(d, settings.ledgerSlots, settings.ledgerEnabled);
@@ -922,73 +955,180 @@ namespace AgencyEngine::Director
             return context.dump();
         }
 
-        // Picks this tick's lens by weight, avoiding an immediate repeat.
+        // ---- the clocks ---------------------------------------------------
         //
-        // Director thread only, which is what lets the "don't repeat" state be
-        // a plain static. Avoiding the repeat is the entire reason this is not
-        // a `{% set roll = random %}` in the template: an independent draw per
-        // tick produces runs, and on the default two-game-hour interval a run
-        // of four is most of an in-game day spent asking the same question.
+        // There is no draw and no shared tick. Each lens holds a game-time
+        // deadline, an ask stamps the next one, and a pass on which nothing is
+        // due makes no LLM calls at all. Two consecutive asks cannot repeat a
+        // question for free: a lens is structurally unable to re-ask inside its
+        // own interval, because it is not asked.
         //
-        // A lens needs a prompt file name and a weight above zero to be picked.
-        // With none usable there is nothing to ask, and the tick holds rather
-        // than dispatching — see HasUsableLens below, which is what the gate
-        // checks before we get here.
-        bool HasUsableLens(const Settings& settings)
+        // Called from the Director thread; the clocks themselves live in Status
+        // because the LLM callback extends them from a SkyrimNet worker.
+
+        // Brings the clock table in line with the configured lenses and returns
+        // the ones that may be asked now. Arms anything new — a fresh install, a
+        // lens switched on, the first pass after a load — at now + its interval,
+        // so nothing fires the instant a save comes up.
+        //
+        // Called on every pass that gets past the gates, including a manual one,
+        // which wants the arming and the pruning even though it picks its own
+        // lens afterwards.
+        std::vector<LensChoice> SyncLensClocks(const std::vector<LensChoice>& usable, double nowGameDays)
         {
-            return std::any_of(std::begin(settings.lenses), std::end(settings.lenses), [](const Lens& lens) {
-                return lens.weight > 0 && lens.prompt[0] != '\0';
+            std::vector<LensChoice> due;
+
+            WithState([&](Status& state) {
+                // Drop clocks for lenses that are no longer asked, so a switched-
+                // off row doesn't sit on the Lenses tab counting down to nothing.
+                std::erase_if(state.lensClocks, [&](const LensClock& clock) {
+                    return std::ranges::none_of(usable,
+                                                [&](const LensChoice& lens) { return lens.key == clock.key; });
+                });
+
+                for (const auto& lens : usable) {
+                    auto it = std::ranges::find_if(state.lensClocks,
+                                                   [&](const LensClock& clock) { return clock.key == lens.key; });
+                    if (it == state.lensClocks.end()) {
+                        state.lensClocks.push_back(LensClock{
+                            lens.key, lens.name, nowGameDays + GameMinutesToDays(lens.intervalGameMinutes),
+                            nowGameDays, false, false });
+                        logger::info("The {} lens is armed at game time {} — first ask in {:.0f} in-game minutes",
+                                     lens.name.empty() ? "unnamed" : lens.name, FormatGameTime(nowGameDays),
+                                     lens.intervalGameMinutes);
+                        continue;
+                    }
+
+                    // Game time runs backwards when an older save is loaded.
+                    // Treat it as a fresh arming rather than as a deadline
+                    // already met, which would ask every lens at once.
+                    if (nowGameDays < it->armedGameDays) {
+                        logger::info("Game time moved backwards ({} -> {}) — an older save was loaded; the {} "
+                                     "lens's clock restarts",
+                                     FormatGameTime(it->armedGameDays), FormatGameTime(nowGameDays), it->name);
+                        it->dueGameDays = nowGameDays + GameMinutesToDays(lens.intervalGameMinutes);
+                        it->armedGameDays = nowGameDays;
+                        continue;
+                    }
+
+                    // The name is a label and can be edited under a stable id.
+                    it->name = lens.name;
+                    if (it->inFlight || nowGameDays < it->dueGameDays) {
+                        continue;
+                    }
+                    due.push_back(lens);
+                }
+            });
+
+            return due;
+        }
+
+        // The lens the manual trigger asks: whichever is nearest due, since the
+        // button means "ask something now" and there is no longer a draw to
+        // stand in for a choice. Never one already in flight.
+        std::optional<LensChoice> NextLensToAsk(const std::vector<LensChoice>& usable)
+        {
+            std::optional<LensChoice> best;
+            double                    bestDue = 0.0;
+            WithState([&](Status& state) {
+                for (const auto& clock : state.lensClocks) {
+                    if (clock.inFlight) {
+                        continue;
+                    }
+                    const auto it = std::ranges::find_if(usable,
+                                                         [&](const LensChoice& lens) { return lens.key == clock.key; });
+                    if (it == usable.end()) {
+                        continue;
+                    }
+                    if (!best || clock.dueGameDays < bestDue) {
+                        best = *it;
+                        bestDue = clock.dueGameDays;
+                    }
+                }
+            });
+            return best;
+        }
+
+        // Why nothing was asked this pass, phrased as the next thing that will
+        // happen. Named per lens because "counting down" without saying which
+        // question is counting is exactly the log line that answers nothing.
+        std::string DescribeNextAsk(double nowGameDays)
+        {
+            std::string name;
+            double      soonest = 0.0;
+            bool        anyInFlight = false;
+            bool        found = false;
+            WithState([&](Status& state) {
+                for (const auto& clock : state.lensClocks) {
+                    if (clock.inFlight) {
+                        anyInFlight = true;
+                        continue;
+                    }
+                    if (!found || clock.dueGameDays < soonest) {
+                        soonest = clock.dueGameDays;
+                        name = clock.name;
+                        found = true;
+                    }
+                }
+            });
+
+            if (!found) {
+                return anyInFlight ? std::string{ "every lens is mid-ask" } : std::string{ "no lens is armed yet" };
+            }
+            const auto minutes = (soonest - nowGameDays) * 24.0 * 60.0;
+            return std::format("counting down — the {} lens asks in {:.0f} in-game minutes{}",
+                               name.empty() ? "unnamed" : name, minutes < 0.0 ? 0.0 : minutes,
+                               anyInFlight ? ", and another is mid-ask" : "");
+        }
+
+        // Stamped at dispatch, so a call that takes ten seconds does not let the
+        // same lens ask again in the meantime, and a call that never comes back
+        // costs one interval rather than wedging the lens for the session.
+        void StampAsk(const LensChoice& lens, double nowGameDays)
+        {
+            WithState([&](Status& state) {
+                for (auto& clock : state.lensClocks) {
+                    if (clock.key != lens.key) {
+                        continue;
+                    }
+                    clock.inFlight = true;
+                    clock.asked = true;
+                    clock.armedGameDays = nowGameDays;
+                    clock.dueGameDays = nowGameDays + GameMinutesToDays(lens.intervalGameMinutes);
+                }
+                state.inFlight = true;
             });
         }
 
-        LensChoice PickLens(const Settings& settings)
+        // The ask is over. `carried` pushes the clock out by the cooldown on top
+        // of the interval already stamped: carry is what a lens goes quiet for,
+        // whether or not she has voiced it yet. Nothing keys on her speaking —
+        // speech can lag a carry indefinitely, and a lens gated on it could
+        // re-ask about a subject she is already carrying.
+        //
+        // Runs on a SkyrimNet worker thread as well as the Director's, hence
+        // WithState rather than a plain member.
+        void ReleaseAsk(const std::string& key, double askedAtGameDays, float intervalGameMinutes,
+                        float cooldownGameMinutes, bool carried)
         {
-            static std::mt19937 rng{ std::random_device{}() };
-            static std::string  previous;
-
-            std::vector<const Lens*> eligible;
-            int totalWeight = 0;
-            for (const auto& lens : settings.lenses) {
-                if (lens.weight > 0 && lens.prompt[0] != '\0') {
-                    eligible.push_back(&lens);
-                    totalWeight += lens.weight;
-                }
-            }
-
-            // Drop the previous lens only when something else could be chosen.
-            // With one lens configured, repeating is the only option and is not
-            // a defect; with two, this alternates strictly, which is the point.
-            //
-            // Held as the prompt file, not the name: two lenses can carry the
-            // same name — a hand-authored one and a shipped one — and matching on
-            // it would knock the wrong row out of the draw.
-            if (eligible.size() > 1 && !previous.empty()) {
-                std::erase_if(eligible, [&](const Lens* lens) { return previous == lens->prompt; });
-                totalWeight = 0;
-                for (const auto* lens : eligible) {
-                    totalWeight += lens->weight;
-                }
-            }
-
-            const Lens* chosen = eligible.back();
-            if (totalWeight > 0) {
-                auto draw = std::uniform_int_distribution<int>{ 0, totalWeight - 1 }(rng);
-                for (const auto* lens : eligible) {
-                    draw -= lens->weight;
-                    if (draw < 0) {
-                        chosen = lens;
-                        break;
+            WithState([&](Status& state) {
+                for (auto& clock : state.lensClocks) {
+                    if (clock.key != key) {
+                        continue;
+                    }
+                    clock.inFlight = false;
+                    if (carried) {
+                        clock.dueGameDays =
+                            askedAtGameDays + GameMinutesToDays(intervalGameMinutes + cooldownGameMinutes);
                     }
                 }
-            }
-
-            previous = chosen->prompt;
-            return LensChoice{ chosen->name, chosen->prompt, chosen->proposal, chosen->ledgerSlots };
+                state.inFlight = std::ranges::any_of(state.lensClocks,
+                                                     [](const LensClock& clock) { return clock.inFlight; });
+            });
         }
 
-        void Fire(const Settings& settings, const GameSnapshot& snap, bool manual)
+        void Fire(const Settings& settings, const GameSnapshot& snap, bool manual, const LensChoice& lens)
         {
-            const auto lens = PickLens(settings);
             const auto contextJson = BuildContextJson(settings, snap, manual);
 
             // Resolve everyone the model is allowed to name, here on the
@@ -1004,8 +1144,8 @@ namespace AgencyEngine::Director
             const auto delivery = settings.delivery;
             const auto gameDays = snap.gameDays;
 
+            StampAsk(lens, gameDays);
             WithState([&](Status& state) {
-                state.inFlight = true;
                 state.lastError.clear();
                 state.lastContextJson = contextJson;
             });
@@ -1014,9 +1154,11 @@ namespace AgencyEngine::Director
             // the same job at the same cost, and one variant means one place in
             // SkyrimNet's UI to point impulses at a cheaper model.
             logger::info("Asking the {} question — prompt '{}' (variant '{}'), context {} bytes, {} follower(s), "
-                         "delivery '{}'",
+                         "delivery '{}'. Next {} ask in {:.0f} in-game minutes, or {:.0f} if this one carries",
                          lens.name.empty() ? "unnamed" : lens.name, lens.prompt, kLLMVariant, contextJson.size(),
-                         roster.size(), delivery == kDirectNarration ? "direct-narration" : "persistent-event");
+                         roster.size(), delivery == kDirectNarration ? "direct-narration" : "persistent-event",
+                         lens.name.empty() ? "unnamed" : lens.name, lens.intervalGameMinutes,
+                         lens.intervalGameMinutes + lens.cooldownGameMinutes);
 
             if (player.uuid == 0) {
                 logger::warn("SkyrimNet does not know the player's UUID — the impulse will be registered without a "
@@ -1036,12 +1178,20 @@ namespace AgencyEngine::Director
                 // Runs on a SkyrimNet worker thread. Nothing here touches the
                 // game — the delivery hop is posted to the main thread.
                 [delivery, gameDays, dispatchedAt, player = std::move(player), roster = std::move(roster),
-                 generateThought = settings.generateThought, lensName = lens.name, proposal = lens.proposal,
-                 lensLedgerSlots = lens.ledgerSlots, ledgerVeto = settings.ledgerVeto && settings.ledgerEnabled,
+                 generateThought = settings.generateThought, lensKey = lens.key, lensName = lens.name,
+                 proposal = lens.proposal, lensLedgerSlots = lens.ledgerSlots,
+                 interval = lens.intervalGameMinutes, cooldown = lens.cooldownGameMinutes,
+                 ledgerVeto = settings.ledgerVeto && settings.ledgerEnabled,
                  verbose = settings.debugLog](std::string response, bool success) {
                     const auto elapsedMs = NowMs() - dispatchedAt;
-                    g_inFlight.store(false);
-                    WithState([&](Status& state) { state.inFlight = false; });
+
+                    // Every path out of this callback goes through here, and
+                    // exactly one of them passes true. Called before the return
+                    // rather than from a destructor so that the one place the
+                    // cooldown is spent is visible in the flow.
+                    const auto release = [&](bool carried) {
+                        ReleaseAsk(lensKey, gameDays, interval, cooldown, carried);
+                    };
 
                     logger::info("LLM responded after {} ms: success={}, {} bytes", elapsedMs, success,
                                  response.size());
@@ -1052,6 +1202,10 @@ namespace AgencyEngine::Director
                         WithState([&](Status& state) {
                             state.lastError = response.empty() ? "LLM call failed" : response;
                         });
+                        // A failed call is not a quiet ask, but it costs the same
+                        // interval: retrying it next pass would turn an outage
+                        // into a call every second.
+                        release(false);
                         return;
                     }
 
@@ -1068,8 +1222,9 @@ namespace AgencyEngine::Director
                     // "is it ever speaking?" is the first question anyone
                     // tuning this will ask.
                     if (!decision.speak) {
-                        logger::info("Nobody had anything to raise this time ({} question).",
-                                     lensName.empty() ? "general" : lensName);
+                        logger::info("Nobody had anything to raise this time ({} question). A quiet ask costs one "
+                                     "interval: the next is in {:.0f} in-game minutes.",
+                                     lensName.empty() ? "general" : lensName, interval);
                         Impulse quiet;
                         quiet.when = FormatGameTime(gameDays);
                         quiet.content = "(nobody had anything to raise)";
@@ -1077,6 +1232,7 @@ namespace AgencyEngine::Director
                         quiet.lens = lensName;
                         quiet.ok = true;
                         RecordImpulse(std::move(quiet), false);
+                        release(false);
                         return;
                     }
 
@@ -1094,6 +1250,7 @@ namespace AgencyEngine::Director
                             WithState([&](Status& state) {
                                 state.lastError = "impulse returned with nobody present to speak it";
                             });
+                            release(false);
                             return;
                         }
                         logger::warn("The model named '{}' as the speaker, who is not in the party — falling back "
@@ -1139,7 +1296,7 @@ namespace AgencyEngine::Director
                     if (ledgerVeto && !decision.topic.empty() &&
                         PendingImpulses::LedgerSuppresses(speaker->formID, decision.topic, lensName)) {
                         logger::info("Held back: {} has already raised '{}' under the {} lens and the ledger still "
-                                     "holds it. Nothing is said this tick.",
+                                     "holds it. Nothing is carried from this ask.",
                                      speaker->name, OneLine(decision.topic), lensName.empty() ? "unnamed" : lensName);
                         Impulse held;
                         held.when = FormatGameTime(gameDays);
@@ -1151,6 +1308,10 @@ namespace AgencyEngine::Director
                         held.lens = lensName;
                         held.ok = true;
                         RecordImpulse(std::move(held), false);
+                        // Nothing is carried, so this cost an interval and not
+                        // the cooldown — the lens gets to try a different subject
+                        // rather than being silenced for the model's repeat.
+                        release(false);
                         return;
                     }
 
@@ -1180,14 +1341,23 @@ namespace AgencyEngine::Director
                     outgoing.proposal = proposal;
                     outgoing.lensLedgerSlots = lensLedgerSlots;
 
+                    // The ask produced something to carry, so this lens goes
+                    // quiet for the cooldown as well as the interval. Stamped
+                    // here rather than at delivery: delivery can be held for a
+                    // conversation, and a lens that stayed askable in the
+                    // meantime could produce a second impulse about the same
+                    // day for the same companion.
+                    logger::info("The {} lens carried something, so it goes quiet for {:.0f} in-game minutes",
+                                 lensName.empty() ? "unnamed" : lensName, interval + cooldown);
+                    release(true);
+
                     SKSE::GetTaskInterface()->AddTask(
                         [outgoing = std::move(outgoing)]() mutable { DeliverOrHold(std::move(outgoing)); });
                 });
 
             if (!queued) {
-                g_inFlight.store(false);
+                ReleaseAsk(lens.key, gameDays, lens.intervalGameMinutes, lens.cooldownGameMinutes, false);
                 WithState([&](Status& state) {
-                    state.inFlight = false;
                     state.lastError = "SkyrimNet refused the LLM request (queue full or API unavailable)";
                 });
                 logger::error("SkyrimNet refused the LLM request");
@@ -1199,8 +1369,8 @@ namespace AgencyEngine::Director
         // Both helpers below are called only from the Director thread, so their
         // statics need no synchronisation.
 
-        // Logs a hold reason when it *changes*. The loop ticks once a second;
-        // logging every tick would make the file useless, and logging nothing
+        // Logs a hold reason when it *changes*. The loop passes once a second;
+        // logging every pass would make the file useless, and logging nothing
         // makes "why didn't it fire" unanswerable. Transitions are the
         // information.
         void NoteHold(std::string reason)
@@ -1286,7 +1456,7 @@ namespace AgencyEngine::Director
 
         // ---- SkyrimNet continuous mode, held for the length of a fight -----
         //
-        // Called every tick from the Director thread, ahead of and independent
+        // Called on every pass from the Director thread, ahead of and independent
         // of the impulse gates: whether an impulse is due has nothing to do with
         // whether the party should be talking through a fight.
         //
@@ -1438,7 +1608,7 @@ namespace AgencyEngine::Director
 
         // Delivers a held impulse the moment the party goes quiet, or gives up
         // on it. Director thread.
-        // Called on every tick, including the ones where the world is not
+        // Called on every pass, including the ones where the world is not
         // readable — that is the whole point. This is the only thing in the
         // file whose clock has to keep being *stopped* while the game is
         // suspended, and it cannot do that from behind a freshness guard.
@@ -1590,7 +1760,7 @@ namespace AgencyEngine::Director
         {
             // Cleared from a SkyrimNet worker, so not a plain bool. One check in
             // flight at a time: they are cheap but not free, and a stall would
-            // otherwise queue one per tick.
+            // otherwise queue one per pass.
             static std::atomic_bool checkInFlight{ false };
 
             // One at a time, whether asked for by hand or by the clock. Checked
@@ -1773,17 +1943,17 @@ namespace AgencyEngine::Director
 
         void Loop()
         {
-            logger::info("Director: loop started (tick {} ms, snapshot staleness limit {} ms)",
-                         std::chrono::milliseconds{ kTickInterval }.count(),
+            logger::info("Director: loop started (pass every {} ms, snapshot staleness limit {} ms)",
+                         std::chrono::milliseconds{ kPassInterval }.count(),
                          std::chrono::milliseconds{ kSnapshotMaxAge }.count());
 
             while (g_running.load()) {
-                std::this_thread::sleep_for(kTickInterval);
+                std::this_thread::sleep_for(kPassInterval);
                 if (!g_running.load()) {
                     break;
                 }
 
-                // Refresh the world snapshot for the *next* tick. Reading a
+                // Refresh the world snapshot for the *next* pass. Reading a
                 // one-second-old snapshot is fine at in-game-hour cadence, and
                 // it keeps every game read on the main thread.
                 if (auto* tasks = SKSE::GetTaskInterface()) {
@@ -1794,13 +1964,9 @@ namespace AgencyEngine::Director
                 const auto settings = SnapshotSettings();
 
                 GameSnapshot snap;
-                bool armed = false;
-                double lastFire = 0.0;
                 WithState([&](Status& state) {
                     state.skyrimNetAvailable = available;
                     snap = state.snapshot;
-                    armed = state.armed;
-                    lastFire = state.lastFireGameDays;
                 });
 
                 LogSnapshotChanges(snap, settings.debugLog);
@@ -1844,20 +2010,19 @@ namespace AgencyEngine::Director
                 // Both of these run ahead of the impulse gates and are not
                 // subject to them: a pending impulse has to expire on schedule
                 // whether or not another one is due, and it is rendered into her
-                // bio on every line she speaks, not only on our ticks.
+                // bio on every line she speaks, not only on our passes.
                 if (available && snap.valid && snapshotFresh) {
                     PumpQuietPoll(settings);
                     PumpPendingImpulses(settings, snap);
                 }
 
-                // Every path that declines to fire names itself. "It never
+                // Every path that declines to ask names itself. "It never
                 // fires" is the failure mode a user will actually hit, and a
                 // log that goes quiet is indistinguishable from a log that
                 // says why — so each gate below sets `hold` instead of
                 // silently continuing. NoteHold() logs only on *change*, so
                 // the steady state costs one line, not one per second.
                 std::string hold;
-                double elapsedMinutes = 0.0;
 
                 if (!available) {
                     hold = "SkyrimNet is not available (SkyrimNet.dll did not load)";
@@ -1866,8 +2031,6 @@ namespace AgencyEngine::Director
                 } else if (!snapshotFresh) {
                     hold = "world snapshot is stale — the main thread is not running tasks "
                            "(loading screen, main menu, or a hard stall)";
-                } else if (g_inFlight.load()) {
-                    hold = "an impulse is already being generated";
                 }
 
                 if (!hold.empty()) {
@@ -1877,56 +2040,33 @@ namespace AgencyEngine::Director
 
                 const bool manual = g_fireNow.exchange(false);
                 if (manual) {
-                    logger::info("Manual trigger requested from the UI — bypassing interval and gating");
+                    logger::info("Manual trigger requested from the UI — bypassing the clocks and gating");
                 }
 
+                // Gates that stop every lens at once. None of them touch a
+                // clock: the clocks run on game time, which is already stopped
+                // in a menu, so a fight or a dismissed follower delays the asks
+                // that come due inside it rather than cancelling them.
                 if (!manual) {
-                    elapsedMinutes = (snap.gameDays - lastFire) * 24.0 * 60.0;
-
                     if (!settings.enabled) {
                         hold = "disabled in settings";
-                    } else if (!armed) {
-                        // First valid tick of this session/save: start the
-                        // countdown from now rather than firing immediately.
-                        WithState([&](Status& state) {
-                            state.armed = true;
-                            state.lastFireGameDays = snap.gameDays;
-                        });
-                        logger::info("Timer armed at game time {} — first impulse due in {:.0f} in-game minutes",
-                                     FormatGameTime(snap.gameDays), settings.intervalGameMinutes);
-                        NoteHold("counting down to the first impulse");
-                        continue;
-                    } else if (snap.gameDays < lastFire) {
-                        // Game time runs backwards when an older save is
-                        // loaded; treat that as a fresh start rather than
-                        // firing forever.
-                        WithState([&](Status& state) { state.lastFireGameDays = snap.gameDays; });
-                        logger::info("Game time moved backwards ({} -> {}) — an older save was loaded; "
-                                     "timer restarted",
-                                     FormatGameTime(lastFire), FormatGameTime(snap.gameDays));
-                        NoteHold("timer restarted after a backwards time jump");
-                        continue;
-                    } else if (elapsedMinutes < settings.intervalGameMinutes) {
-                        hold = std::format("counting down — {:.0f} of {:.0f} in-game minutes elapsed",
-                                           elapsedMinutes, settings.intervalGameMinutes);
                     } else if (settings.requireFollower && snap.followers.empty()) {
-                        hold = "impulse is due but no followers are present ('Only when a follower is present' "
-                               "is on)";
+                        hold = "no followers are present ('Only when a follower is present' is on)";
                     } else if (settings.skipInCombat && snap.playerInCombat) {
-                        hold = "impulse is due but the player is in combat ('Skip while in combat' is on)";
+                        hold = "the player is in combat ('Skip while in combat' is on)";
                     } else if (suspended) {
-                        hold = snap.gamePaused ? "impulse is due but the game is paused"
-                                               : "impulse is due but the game window is in the background";
+                        hold = snap.gamePaused ? "the game is paused" : "the game window is in the background";
                     } else if (WithinResumeSettle()) {
-                        hold = "impulse is due but the player has only just come back — letting the game settle";
+                        hold = "the player has only just come back — letting the game settle";
                     }
                 }
 
-                // Checked here rather than with the interval gates so it covers
+                // Checked here rather than with the gates above so it covers
                 // the manual trigger too: the UI button bypasses gating, but
                 // there is still no prompt to send.
-                if (hold.empty() && !HasUsableLens(settings)) {
-                    hold = "no lens is usable — each needs a prompt file name and a weight above zero";
+                const auto usable = UsableLenses(settings);
+                if (hold.empty() && usable.empty()) {
+                    hold = "no lens is usable — each needs a prompt file name and its own switch on the Lenses tab";
                 }
 
                 if (hold.empty() && !SkyrimNetAPI::IsMemorySystemReady()) {
@@ -1939,24 +2079,36 @@ namespace AgencyEngine::Director
                     continue;
                 }
 
+                // The whole of scheduling. Several clocks expiring together is
+                // an ordinary outcome and produces several asks, not a
+                // collision: asking two questions is not worse than asking one.
+                auto                    due = SyncLensClocks(usable, snap.gameDays);
+                std::vector<LensChoice> asking;
+                if (manual) {
+                    if (auto next = NextLensToAsk(usable)) {
+                        asking.push_back(std::move(*next));
+                    }
+                } else {
+                    asking = std::move(due);
+                }
+
+                if (asking.empty()) {
+                    // Not a failure and not a hold in the old sense — this is
+                    // the ordinary state of a pass, and it costs nothing at all.
+                    NoteHold(manual ? std::string{ "every lens is mid-ask" } : DescribeNextAsk(snap.gameDays));
+                    continue;
+                }
+
                 NoteHold({});
 
-                logger::info("Impulse due at game time {} — {:.0f} in-game minutes elapsed (interval {:.0f}), "
-                             "{} follower(s) present, location '{}'{}",
-                             FormatGameTime(snap.gameDays), elapsedMinutes, settings.intervalGameMinutes,
-                             snap.followers.size(), snap.location.empty() ? "unknown" : snap.location,
+                logger::info("{} lens(es) due at game time {} — {} follower(s) present, location '{}'{}",
+                             asking.size(), FormatGameTime(snap.gameDays), snap.followers.size(),
+                             snap.location.empty() ? "unknown" : snap.location,
                              manual ? ", manually triggered" : "");
 
-                // Stamp the clock at dispatch, not at delivery: an LLM call can
-                // take many seconds, and we don't want a backlog of impulses to
-                // fire the moment it returns.
-                g_inFlight.store(true);
-                WithState([&](Status& state) {
-                    state.armed = true;
-                    state.lastFireGameDays = snap.gameDays;
-                });
-
-                Fire(settings, snap, manual);
+                for (const auto& lens : asking) {
+                    Fire(settings, snap, manual, lens);
+                }
             }
 
             logger::info("Director: loop stopped");
@@ -2018,11 +2170,14 @@ namespace AgencyEngine::Director
         }
         WithState([](Status& state) {
             state.pendingImpulses.clear();
-            state.armed = false;
-            state.lastFireGameDays = 0.0;
+            // Every clock belongs to the save we just left, and game time in the
+            // new one may be anywhere. They rearm from the first pass that gets
+            // past the gates, so nothing asks the instant a save comes up.
+            state.lensClocks.clear();
+            state.inFlight = false;
             state.snapshot = {};
             // continuousOwned is deliberately NOT cleared here: the Director
-            // needs it on its next tick to know whether it still owes SkyrimNet
+            // needs it on its next pass to know whether it still owes SkyrimNet
             // a switch-off from before the load. It clears it once it has.
             state.continuousPending = false;
             state.gameMasterOff = false;

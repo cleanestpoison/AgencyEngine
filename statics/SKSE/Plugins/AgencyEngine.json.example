@@ -17,7 +17,6 @@
 // to parse. Change settings in-game instead.
 {
   "enabled": true,
-  "intervalGameMinutes": 120.0,
   "delivery": 1,
   "generateThought": true,
   "requireFollower": true,
@@ -51,16 +50,26 @@
   // The lenses themselves are not configuration. Which lenses exist, what each
   // is called, which prompt file it asks through and whether it produces
   // proposals all come from the mod, because they describe prompt files that
-  // ship beside the DLL. That is what lets an update add a lens or fix one
-  // without you having to add a row by hand, and without your weights resetting.
+  // ship beside the DLL. That is what lets an update add a lens, fix one, or
+  // retune a cadence without you having to add a row by hand.
   //
-  // What you can set is the weight (0 switches a lens off, which is also how you
-  // disable one whose prompt needs a mod you don't have) and the ledger slot
-  // count (0 = use the shared count above). Only the ones you moved are written.
+  // What you can set is whether the lens is asked at all (`enabled` off is also
+  // how you disable one whose prompt needs a mod you don't have), its cadence,
+  // and its ledger slot count (0 = use the shared count above). Only the ones
+  // you moved are written.
+  //
+  // There is no shared impulse interval. Each lens waits `intervalGameMinutes`
+  // between asks, and takes `cooldownGameMinutes` on top of that once an ask has
+  // landed as something she is carrying — whether or not she has said it yet.
+  // Both are in-game minutes, so they stretch and compress with the timescale.
+  //
+  // `weight` and the old top-level `intervalGameMinutes` are gone. A file that
+  // still has them is read, they are named in the log, and they are not written
+  // back — except `weight: 0`, which still means "never ask this lens".
   "lenses": {
-    "aspiration":   { "weight": 35, "ledgerSlots": 0 },
-    "relationship": { "weight": 25, "ledgerSlots": 0 },
-    "activity":     { "weight": 40, "ledgerSlots": 3 }
+    "aspiration":   { "enabled": true, "intervalGameMinutes": 120.0, "cooldownGameMinutes": 480.0,  "ledgerSlots": 0 },
+    "relationship": { "enabled": true, "intervalGameMinutes": 360.0, "cooldownGameMinutes": 1440.0, "ledgerSlots": 0 },
+    "activity":     { "enabled": true, "intervalGameMinutes": 240.0, "cooldownGameMinutes": 2880.0, "ledgerSlots": 3 }
   },
 
   // A lens you wrote yourself has no shipped row behind it, so it is stored

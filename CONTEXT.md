@@ -12,13 +12,31 @@ unprompted, and hand them a speaking turn on it.
 A single decision that one companion has something to raise right now, expressed as a stage direction.
 _Avoid_: prompt, generation, event
 
-**Tick**:
-One firing of the loop, on the in-game interval. Most ticks produce silence, and that is the design.
-_Avoid_: cycle, poll
+**Ask**:
+One call to one lens. Most asks produce silence, and that is the design. It is the unit everything
+about cadence and cost is measured in — a lens is asked, not the loop.
+_Avoid_: tick, cycle, poll, firing
 
-**Quiet tick**:
-A tick that returned no speaker. The common and correct outcome, counted separately per lens.
+**Quiet ask**:
+An ask that returned no speaker. The common and correct outcome, counted separately per lens.
 _Avoid_: failure, miss, empty
+
+**Pass**:
+One turn of the Director's own loop, once a second. A pass checks every lens's clock and may make no
+LLM calls at all — that is the ordinary case, and it is what a pass is *for*. Never a unit of cadence.
+_Avoid_: tick, iteration
+
+**Interval**:
+How long a lens waits between asks, in game time. Both the chattiness knob and the cost knob: a quiet
+ask is still an LLM call, and there is no tick behind it throttling anything.
+_Avoid_: frequency, rate, cadence (which names the pair)
+
+**Cooldown**:
+The extra silence a lens takes once its ask has landed as a carried impulse — so a carry costs
+interval + cooldown. Keyed on carry, never on her speaking it. This is what makes the anti-nag
+structural: a lens cannot re-raise inside its cooldown because it is never asked. Belongs to lens
+cadence only; the **ledger** evicts by count and has no clock.
+_Avoid_: timeout, backoff, suppression window
 
 **Stage direction**:
 The 2–4 sentence, third-person, present-tense text an impulse carries. It names a topic, a why-now,
@@ -26,26 +44,28 @@ and an opening. It never contains the companion's words or their conclusion — 
 _Avoid_: narration text, dialogue, script
 
 **Forced turn**:
-A tick on which the silence option is removed from the prompt and someone must speak. A percentage
-setting, rolled inside the template, suppressed while the party is mid-exchange.
+An ask on which the silence option is removed from the prompt and someone must speak. A percentage
+setting, rolled inside the template per ask, suppressed while the party is mid-exchange.
 _Avoid_: guaranteed impulse, always-on
 
 ### Lenses
 
 **Lens**:
 One focused question the loop can ask, shipped as a prompt file that extends the base and overrides
-prose blocks only. Selection is weighted and happens in the DLL, never in the template.
+prose blocks only. Each lens runs on its own **interval** and **cooldown**; there is no selection
+between them, because asking two questions is not worse than asking one.
 _Avoid_: mode, prompt type, category
 
 **Lens roster**:
 Which lenses exist. It is *content*, shipped in the build alongside the prompt files it names, not
-configuration — a user tunes a lens's **weight** and its ring size and nothing else about it. This is
-what lets a later version add or fix a lens on an install that already has a settings file.
+configuration — a user switches a lens on or off, moves its **interval** and **cooldown**, sets its
+ring size, and nothing else about it. This is what lets a later version add or fix a lens, or retune a
+cadence, on an install that already has a settings file.
 _Avoid_: lens list, configured lenses
 
 **Lens id**:
 The stable key a config override is stored under (`activity`, `aspiration`). Never displayed and never
-edited, so a lens can be renamed by a release without resetting anyone's weight. Distinct from the
+edited, so a lens can be renamed by a release without resetting anyone's cadence. Distinct from the
 **ledger ring**, which keys on the lens's *name* because it is per-character saved state.
 _Avoid_: lens key, lens slug
 
@@ -120,7 +140,9 @@ _Avoid_: relationship score, rapport, affinity
 
 - A **Lens** produces **Impulses**, each of which is either a **Topic** or a **Proposal**
 - A **Lens** declares which kind it produces; this is *not* inferred from its name, which is a label
-- The **Lens roster** comes from the build; the config holds only weight and ring size, by **Lens id**
+- Each **Lens** is asked on its own **Interval**; a **Carried** impulse costs it a **Cooldown** as well
+- The **Lens roster** comes from the build; the config holds the switch, the cadence and the ring size,
+  by **Lens id**
 - An **Impulse** becomes at most one **Pending impulse**, which is **Carried** and may become **Spoken**
 - **Resolution** decides a **Pending impulse**, and the question it asks depends on Topic vs Proposal
 - A resolved **Pending impulse** confirms a **Ledger** slot; an unresolved one withdraws it
@@ -159,3 +181,8 @@ _Avoid_: relationship score, rapport, affinity
 - **"Lens" as a config entity** was the original design and is now wrong. Resolved: the **lens roster**
   is content and the config holds *overrides* against it, keyed by **lens id**. A config that could
   contradict the build about a lens's prompt file could only ever be wrong about it.
+- **"Weight"** meant a lens's share of a draw that no longer happens, and **"tick"** meant both the
+  impulse cadence and the Director's own loop. Resolved by ADR 0003: cadence is per lens (**interval**
+  and **cooldown**), the unit is the **ask**, and the loop's iteration is a **pass**. Weight survives
+  in one place only — a stored `weight: 0` still reads as "never ask this", because that is how an
+  install switched off a lens whose prompt needs a mod it does not have.

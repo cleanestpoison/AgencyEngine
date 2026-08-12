@@ -76,6 +76,13 @@ namespace
         return nullptr;
     }
 
+    // The shipped row, so a case can say "unchanged from the build" without
+    // repeating a number that is deliberately free to move between releases.
+    const Lens* Builtin(std::string_view id)
+    {
+        return AgencyEngine::BuiltinLensFor(id);
+    }
+
     // The whole point of the change: a setting nobody touched is not in the
     // file, so a later version that retunes it reaches this install.
     void SaveWritesOnlyWhatChanged()
@@ -93,6 +100,7 @@ namespace
         CHECK(text.find("quietSeconds") == std::string::npos);
         CHECK(text.find("ledgerSlots") == std::string::npos);
         CHECK(text.find("intervalGameMinutes") == std::string::npos);
+        CHECK(text.find("cooldownGameMinutes") == std::string::npos);
         CHECK(text.find("followerEventTypeFilter") == std::string::npos);
         // No lens was moved either, so neither key appears at all.
         CHECK(text.find("lenses") == std::string::npos);
@@ -115,24 +123,106 @@ namespace
     // in a config that already exists.
     void ANewLensAppearsInAnExistingConfig()
     {
-        Begin("a lens the config has never heard of arrives at its shipped weight");
+        Begin("a lens the config has never heard of arrives at its shipped cadence");
 
         // A file that predates every builtin but one, and moves that one.
-        WriteConfig(R"({ "lenses": { "aspiration": { "weight": 10 } } })");
+        WriteConfig(R"({ "lenses": { "aspiration": { "intervalGameMinutes": 45 } } })");
 
         Settings s;
         CHECK(s.Load());
 
-        CHECK(Find(s, "aspiration") != nullptr && Find(s, "aspiration")->weight == 10);
+        CHECK(Find(s, "aspiration") != nullptr && Find(s, "aspiration")->intervalGameMinutes == 45.0f);
         for (const auto& builtin : kBuiltinLenses) {
             const auto* loaded = Find(s, builtin.id);
             CHECK(loaded != nullptr);
             if (loaded && std::string_view{ builtin.id } != "aspiration") {
-                CHECK(loaded->weight == builtin.weight);
+                CHECK(loaded->enabled == builtin.enabled);
+                CHECK(loaded->intervalGameMinutes == builtin.intervalGameMinutes);
+                CHECK(loaded->cooldownGameMinutes == builtin.cooldownGameMinutes);
                 CHECK(loaded->ledgerSlots == builtin.ledgerSlots);
                 CHECK(std::string_view{ loaded->prompt } == builtin.prompt);
             }
         }
+        // The one it did move keeps everything else from the build, including
+        // the cooldown it never mentioned.
+        CHECK(Find(s, "aspiration")->cooldownGameMinutes == kBuiltinLenses[0].cooldownGameMinutes);
+    }
+
+    // ADR 0003 retires the weighted draw. Weight 0 was how an install said
+    // "never ask this" — usually for a lens whose prompt needs a mod they do not
+    // have, where re-enabling it dispatches a prompt that cannot parse — so that
+    // one value survives as the enable switch. Every other weight decided a draw
+    // that no longer happens.
+    void WeightZeroBecomesSwitchedOff()
+    {
+        Begin("a lens weighted 0 stays switched off, and any other weight is ignored");
+
+        WriteConfig(R"({ "lenses": {
+            "relationship": { "weight": 0 },
+            "activity": { "weight": 90 } } })");
+
+        Settings s;
+        CHECK(s.Load());
+
+        CHECK(!Find(s, "relationship")->enabled);
+        // A nonzero weight said nothing about whether the lens runs, so the
+        // lens is left exactly as the build ships it.
+        CHECK(Find(s, "activity")->enabled);
+        CHECK(Find(s, "activity")->intervalGameMinutes == Builtin("activity")->intervalGameMinutes);
+        CHECK(Find(s, "activity")->cooldownGameMinutes == Builtin("activity")->cooldownGameMinutes);
+
+        // And the retired key is never written back, so the next save is the
+        // last time anyone sees it.
+        CHECK(s.Save());
+        const auto text = ReadConfig();
+        CHECK(text.find("weight") == std::string::npos);
+        CHECK(text.find("\"enabled\": false") != std::string::npos);
+    }
+
+    // The shared tick is gone with the draw. A file still carrying it must not
+    // silently do nothing about it, and must not carry it forward either.
+    void TheRetiredIntervalKeyIsIgnoredAndDropped()
+    {
+        Begin("the old shared interval is ignored and never written back");
+
+        WriteConfig(R"({ "intervalGameMinutes": 30, "forcedImpulseChance": 40 })");
+
+        Settings s;
+        CHECK(s.Load());
+
+        // The setting it used to drive no longer exists, so the only thing to
+        // check is that everything else loaded and the key did not survive.
+        CHECK(s.forcedImpulseChance == 40);
+        CHECK(s.Save());
+        const auto text = ReadConfig();
+        CHECK(text.find("intervalGameMinutes") == std::string::npos);
+        CHECK(text.find("forcedImpulseChance") != std::string::npos);
+    }
+
+    // Cadence is per lens now, and both halves of it round-trip.
+    void CadenceOverridesRoundTrip()
+    {
+        Begin("a moved interval and cooldown survive a save and a reload");
+
+        Settings first;
+        for (auto& lens : first.lenses) {
+            if (std::string_view{ lens.id } == "activity") {
+                lens.intervalGameMinutes = 90.0f;
+                lens.cooldownGameMinutes = 15.0f;
+                lens.enabled = false;
+            }
+        }
+        CHECK(first.Save());
+
+        Settings s;
+        CHECK(s.Load());
+        CHECK(s.Summary() == first.Summary());
+        CHECK(Find(s, "activity")->intervalGameMinutes == 90.0f);
+        CHECK(Find(s, "activity")->cooldownGameMinutes == 15.0f);
+        CHECK(!Find(s, "activity")->enabled);
+        // Untouched lenses stay out of the file entirely.
+        const auto text = ReadConfig();
+        CHECK(text.find("aspiration") == std::string::npos);
     }
 
     // Name, prompt file and proposal semantics describe a file in the archive.
@@ -142,7 +232,7 @@ namespace
         Begin("a config cannot rename a shipped lens or repoint its prompt");
 
         WriteConfig(R"({ "lenses": { "activity": {
-            "weight": 7, "ledgerSlots": 9,
+            "intervalGameMinutes": 7, "ledgerSlots": 9,
             "name": "Whatever", "prompt": "does_not_exist", "proposal": false } } })");
 
         Settings s;
@@ -151,8 +241,8 @@ namespace
         const auto* activity = Find(s, "activity");
         CHECK(activity != nullptr);
         if (activity) {
-            CHECK(activity->weight == 7);        // yours
-            CHECK(activity->ledgerSlots == 9);   // yours
+            CHECK(activity->intervalGameMinutes == 7.0f);  // yours
+            CHECK(activity->ledgerSlots == 9);             // yours
             CHECK(std::string_view{ activity->name } == "Activity");
             CHECK(std::string_view{ activity->prompt } == "agencyengine_impulse_activity");
             CHECK(activity->proposal);
@@ -180,37 +270,43 @@ namespace
     }
 
     // The old format: the whole roster as an array, which is what every install
-    // predating this change has on disk.
-    void TheOldArrayFormatKeepsYourWeights()
+    // predating the roster-in-the-build change has on disk. Two migrations run
+    // over it now — the array to the override object, and the weight to the
+    // enable switch — so what survives is the slot count and whether the lens
+    // was switched off at all.
+    void TheOldArrayFormatKeepsWhatItStillMeans()
     {
-        Begin("migrating the old lens array keeps the weights and drops the roster");
+        Begin("migrating the old lens array keeps the slots and drops the roster");
 
         WriteConfig(R"({ "lenses": [
             { "name": "Aspiration", "prompt": "agencyengine_impulse_aspiration", "weight": 5 },
-            { "name": "Relationship", "prompt": "agencyengine_impulse_relationship", "weight": 60 },
+            { "name": "Relationship", "prompt": "agencyengine_impulse_relationship", "weight": 0 },
             { "name": "Activity", "prompt": "agencyengine_impulse_activity", "weight": 35,
               "proposal": true, "ledgerSlots": 4 } ] })");
 
         Settings s;
         CHECK(s.Load());
 
-        CHECK(Find(s, "aspiration")->weight == 5);
-        CHECK(Find(s, "relationship")->weight == 60);
-        CHECK(Find(s, "activity")->weight == 35);
+        CHECK(Find(s, "aspiration")->enabled);
+        CHECK(!Find(s, "relationship")->enabled);
+        CHECK(Find(s, "activity")->enabled);
         CHECK(Find(s, "activity")->ledgerSlots == 4);
+        // Cadence is a field the old file never had, so it comes from the build.
+        CHECK(Find(s, "aspiration")->intervalGameMinutes == Builtin("aspiration")->intervalGameMinutes);
 
         // And it is written back in the new shape, so the migration happens once.
         CHECK(s.Save());
         const auto text = ReadConfig();
-        CHECK(text.find("\"aspiration\"") != std::string::npos);
+        CHECK(text.find("\"relationship\"") != std::string::npos);
         CHECK(text.find("agencyengine_impulse_aspiration") == std::string::npos);
+        CHECK(text.find("weight") == std::string::npos);
     }
 
     // Deleting a row was how the old settings page said "never ask this". The
-    // new page says it with weight 0, and the migration has to carry the intent
-    // across — a deleted lens coming back at its shipped weight is the one
+    // new page says it with the enable switch, and the migration has to carry
+    // the intent across — a deleted lens coming back switched on is the one
     // outcome nobody who deleted it expects.
-    void ADeletedRowMigratesToWeightZero()
+    void ADeletedRowMigratesToSwitchedOff()
     {
         Begin("a lens deleted under the old format stays switched off");
 
@@ -220,21 +316,21 @@ namespace
         Settings s;
         CHECK(s.Load());
 
-        CHECK(Find(s, "aspiration")->weight == 50);
-        CHECK(Find(s, "relationship")->weight == 0);
-        CHECK(Find(s, "activity")->weight == 0);
+        CHECK(Find(s, "aspiration")->enabled);
+        CHECK(!Find(s, "relationship")->enabled);
+        CHECK(!Find(s, "activity")->enabled);
         // Switched off, not erased: the prompt file is still there to be raised.
         CHECK(std::string_view{ Find(s, "activity")->prompt } == "agencyengine_impulse_activity");
     }
 
     // A renamed row is still the shipped lens. The rename is dropped, because
-    // the name is content now — but the weight it was carrying is not.
+    // the name is content now — but what it was carrying is not.
     void ARenamedRowIsStillTheShippedLens()
     {
-        Begin("a row renamed under the old format keeps its weight and loses the name");
+        Begin("a row renamed under the old format keeps its settings and loses the name");
 
         WriteConfig(R"({ "lenses": [
-            { "name": "Dreams", "prompt": "agencyengine_impulse_aspiration", "weight": 70 },
+            { "name": "Dreams", "prompt": "agencyengine_impulse_aspiration", "weight": 0 },
             { "name": "Relationship", "prompt": "agencyengine_impulse_relationship", "weight": 30 },
             { "name": "Activity", "prompt": "agencyengine_impulse_activity", "weight": 40,
               "proposal": true, "ledgerSlots": 3 } ] })");
@@ -242,7 +338,7 @@ namespace
         Settings s;
         CHECK(s.Load());
 
-        CHECK(Find(s, "aspiration")->weight == 70);
+        CHECK(!Find(s, "aspiration")->enabled);
         CHECK(std::string_view{ Find(s, "aspiration")->name } == "Aspiration");
     }
 
@@ -259,6 +355,8 @@ namespace
               "proposal": true, "ledgerSlots": 3 },
             { "name": "Grudges", "prompt": "my_own_lens", "weight": 15,
               "proposal": true, "ledgerSlots": 2 } ] })");
+        // Written under the old format, where a weight above 0 was the whole of
+        // "ask this one" — the only statement about it the file can still make.
 
         Settings first;
         CHECK(first.Load());
@@ -277,9 +375,12 @@ namespace
         if (mine) {
             CHECK(mine->id[0] == '\0');  // no shipped row to be an override of
             CHECK(std::string_view{ mine->name } == "Grudges");
-            CHECK(mine->weight == 15);
+            CHECK(mine->enabled);
             CHECK(mine->proposal);
             CHECK(mine->ledgerSlots == 2);
+            // A cadence the old file could not have carried, so it starts at the
+            // blank row's own default and is the user's to move from there.
+            CHECK(mine->intervalGameMinutes > 0.0f);
         }
         // The three shipped rows are still shipped rows, not copies of it.
         int builtins = 0;
@@ -335,10 +436,13 @@ int main()
     SaveWritesOnlyWhatChanged();
     AnUntouchedFileRoundTripsToTheDefaults();
     ANewLensAppearsInAnExistingConfig();
+    WeightZeroBecomesSwitchedOff();
+    TheRetiredIntervalKeyIsIgnoredAndDropped();
+    CadenceOverridesRoundTrip();
     ContentFieldsComeFromTheBuildNotTheFile();
     AnUnknownLensIdIsIgnored();
-    TheOldArrayFormatKeepsYourWeights();
-    ADeletedRowMigratesToWeightZero();
+    TheOldArrayFormatKeepsWhatItStillMeans();
+    ADeletedRowMigratesToSwitchedOff();
     ARenamedRowIsStillTheShippedLens();
     AHandWrittenLensSurvives();
     MoreLensesThanFitAreDropped();
