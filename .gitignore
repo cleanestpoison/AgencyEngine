@@ -14,3 +14,8 @@ CMakeUserPresets.json
 # Local working notes, not part of the mod.
 CLAUDE.md
 handoff.md
+
+# Captured session logs kept for a diagnosis, and a local copy of SkyrimNet's
+# own docs and prompts. Both are reference material, neither is ours to ship.
+bug-analysis/
+skyrimnet-docs/
