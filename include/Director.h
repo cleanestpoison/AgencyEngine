@@ -19,10 +19,19 @@ namespace AgencyEngine::Director
     void Start();
     void Stop();
 
-    // "Generate now" from the UI: asks whichever lens is nearest due on the next
-    // pass, regardless of its clock and of the requireFollower / skipInCombat
-    // gates.
-    void RequestFireNow();
+    // "Ask now" from the UI: asks `lensKey` — Lens::id, or the prompt file for a
+    // hand-authored row — on the next pass, regardless of its clock and of the
+    // requireFollower / skipInCombat gates. Empty asks whichever lens is nearest
+    // due, which is what the Status page's single button means.
+    //
+    // A manual ask stamps the clock exactly like a scheduled one, so it spends
+    // that lens's next natural ask (and the cooldown too, if it carries). The
+    // alternative — a free probe — would leave the log describing a cadence the
+    // lens was not actually keeping.
+    //
+    // Deduplicated per lens: pressing one row's button twice costs one call, and
+    // pressing two rows' costs two, because they are different questions.
+    void RequestFireNow(const std::string& lensKey = {});
 
     // Rearm every lens clock from the current game time.
     void ResetTimer();

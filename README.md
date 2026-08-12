@@ -58,7 +58,9 @@ Everything is visible and tunable in-game through the **SKSE Menu Framework** co
 - **Status** — SkyrimNet connection, current followers, each lens's countdown to its next ask, and a
   *Generate an impulse now* button.
 - **Settings** — gating, cues, how much context to feed the model, and the Lenses tab: a switch, an interval, a
-  cooldown and a slot count per lens, with its carried/quiet count beside them.
+  cooldown and a slot count per lens, with its countdown, its carried/quiet count and an *Ask now* button beside
+  them. *Ask now* asks that one lens immediately, whatever its clock says — the button for tuning a single prompt.
+  It spends the clock like any other ask.
 - **History** — the last 25 impulses with the lens each was asked under, plus the exact context JSON of the most recent dispatch.
 
 Settings persist to `Data/SKSE/Plugins/AgencyEngine.json` (press *Save settings*; they load on game start).

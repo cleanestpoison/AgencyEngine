@@ -53,7 +53,17 @@ namespace AgencyEngine::Director
 
         std::thread      g_thread;
         std::atomic_bool g_running{ false };
-        std::atomic_bool g_fireNow{ false };
+
+        // Asks asked for by hand from the UI. Each entry is a lens key, or ""
+        // for "whichever is nearest due" — the Status page's one button, which
+        // has no lens to name. Written on the render thread, drained on the
+        // Director's, so it needs its own lock.
+        //
+        // A deque rather than a flag because the Lenses tab draws a button per
+        // row: pressing two of them is two asks, and they are independent
+        // questions that must not collapse into one.
+        std::mutex              g_fireLock;
+        std::deque<std::string> g_fireRequests;
         // Set on a load/new game. Combat state, and our belief about who owns
         // continuous mode, do not survive one.
         std::atomic_bool g_continuousReset{ false };
@@ -1042,6 +1052,22 @@ namespace AgencyEngine::Director
                 }
             });
             return best;
+        }
+
+        // Is this lens already waiting on an answer? Only the manual path asks:
+        // the scheduled one gets its answer from SyncLensClocks, which skips an
+        // in-flight lens on its way to deciding what is due.
+        bool AskInFlight(const std::string& key)
+        {
+            bool inFlight = false;
+            WithState([&](Status& state) {
+                for (const auto& clock : state.lensClocks) {
+                    if (clock.key == key) {
+                        inFlight = clock.inFlight;
+                    }
+                }
+            });
+            return inFlight;
         }
 
         // Why nothing was asked this pass, phrased as the next thing that will
@@ -2137,9 +2163,16 @@ namespace AgencyEngine::Director
                     continue;
                 }
 
-                const bool manual = g_fireNow.exchange(false);
+                std::vector<std::string> manualKeys;
+                {
+                    std::scoped_lock lock{ g_fireLock };
+                    manualKeys.assign(g_fireRequests.begin(), g_fireRequests.end());
+                    g_fireRequests.clear();
+                }
+                const bool manual = !manualKeys.empty();
                 if (manual) {
-                    logger::info("Manual trigger requested from the UI — bypassing the clocks and gating");
+                    logger::info("{} manual ask(s) requested from the UI — bypassing the clocks and gating",
+                                 manualKeys.size());
                 }
 
                 // Gates that stop every lens at once. None of them touch a
@@ -2184,8 +2217,38 @@ namespace AgencyEngine::Director
                 auto                    due = SyncLensClocks(usable, snap.gameDays);
                 std::vector<LensChoice> asking;
                 if (manual) {
-                    if (auto next = NextLensToAsk(usable)) {
-                        asking.push_back(std::move(*next));
+                    // A named lens is asked whether or not it is due; the
+                    // unnamed request means the Status page's button, which has
+                    // no row to have been pressed on and takes whatever is
+                    // nearest due. Either way the ask stamps the clock, so a
+                    // manual ask spends the next natural one — the log would
+                    // otherwise say a lens asked on a cadence it did not.
+                    for (const auto& key : manualKeys) {
+                        if (key.empty()) {
+                            if (auto next = NextLensToAsk(usable)) {
+                                asking.push_back(std::move(*next));
+                            } else {
+                                logger::info("Asked for an impulse, but every lens is already mid-ask");
+                            }
+                            continue;
+                        }
+                        const auto it = std::ranges::find_if(
+                            usable, [&](const LensChoice& lens) { return lens.key == key; });
+                        if (it == usable.end()) {
+                            // Switched off between the button press and now, or
+                            // a row edited out from under it.
+                            logger::warn("Asked for the '{}' lens by hand, but it is no longer one this pass can "
+                                         "ask — check it is still ticked on the Lenses tab",
+                                         key);
+                            continue;
+                        }
+                        if (AskInFlight(key)) {
+                            logger::info("The {} lens was asked for by hand, but it is already waiting on an "
+                                         "answer — leaving it be",
+                                         it->name.empty() ? key : it->name);
+                            continue;
+                        }
+                        asking.push_back(*it);
                     }
                 } else {
                     asking = std::move(due);
@@ -2194,16 +2257,20 @@ namespace AgencyEngine::Director
                 if (asking.empty()) {
                     // Not a failure and not a hold in the old sense — this is
                     // the ordinary state of a pass, and it costs nothing at all.
-                    NoteHold(manual ? std::string{ "every lens is mid-ask" } : DescribeNextAsk(snap.gameDays));
+                    // A manual pass that resolved to nothing has already said
+                    // why, per request, so it does not restate it here.
+                    if (!manual) {
+                        NoteHold(DescribeNextAsk(snap.gameDays));
+                    }
                     continue;
                 }
 
                 NoteHold({});
 
-                logger::info("{} lens(es) due at game time {} — {} follower(s) present, location '{}'{}",
+                logger::info("Asking {} lens(es) at game time {} — {} follower(s) present, location '{}'{}",
                              asking.size(), FormatGameTime(snap.gameDays), snap.followers.size(),
                              snap.location.empty() ? "unknown" : snap.location,
-                             manual ? ", manually triggered" : "");
+                             manual ? ", by hand rather than on their clocks" : ", due on their clocks");
 
                 for (const auto& lens : asking) {
                     Fire(settings, snap, manual, lens);
@@ -2232,9 +2299,17 @@ namespace AgencyEngine::Director
         }
     }
 
-    void RequestFireNow()
+    void RequestFireNow(const std::string& lensKey)
     {
-        g_fireNow.store(true);
+        std::scoped_lock lock{ g_fireLock };
+        // Deduplicated per lens, like the resolution requests: the button is
+        // small, the call is not, and a double-click should not cost two. An
+        // unnamed request and a named one are different asks, so neither
+        // swallows the other.
+        if (std::ranges::find(g_fireRequests, lensKey) != g_fireRequests.end()) {
+            return;
+        }
+        g_fireRequests.push_back(lensKey);
     }
 
     void RequestResolveCheck(std::uint32_t formID, const std::string& lens)
@@ -2275,6 +2350,12 @@ namespace AgencyEngine::Director
             // still in her bio in the save that carries it.
             std::scoped_lock lock{ g_cueLock };
             g_cues.clear();
+        }
+        {
+            // A button pressed before the load was meant for the party in the
+            // save being left, not for whoever is standing in the new one.
+            std::scoped_lock lock{ g_fireLock };
+            g_fireRequests.clear();
         }
         WithState([](Status& state) {
             state.pendingImpulses.clear();

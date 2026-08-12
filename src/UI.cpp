@@ -455,16 +455,32 @@ namespace AgencyEngine::UI
                         return c.key == (lens.id[0] != '\0' ? std::string_view{ lens.id }
                                                             : std::string_view{ lens.prompt });
                     });
+                    const bool asking = clock != clocks.end() && clock->inFlight;
                     if (lens.prompt[0] == '\0') {
                         ImGui::TextDisabled("%s", "-");
                     } else if (clock == clocks.end()) {
                         ImGui::TextDisabled("%s", lens.enabled ? "arming" : "off");
-                    } else if (clock->inFlight) {
+                    } else if (asking) {
                         ImGui::TextColored(kGood, "%s", "asking now");
                     } else {
                         const double minutes = (clock->dueGameDays - nowGameDays) * 24.0 * 60.0;
                         ImGui::Text("%.0f min", minutes < 0.0 ? 0.0 : minutes);
                     }
+
+                    // Under the countdown rather than in a column of its own:
+                    // this is the control you reach for *because* of the number
+                    // above it, and a tenth column would cost every other one
+                    // width to say one word.
+                    //
+                    // Keyed the same way the Director keys its clocks — the id
+                    // for a shipped row, the prompt file for one you wrote —
+                    // because the name is free text and two rows may share one.
+                    ImGui::BeginDisabled(!lens.enabled || lens.prompt[0] == '\0' || asking);
+                    if (ImGui::SmallButton("Ask now")) {
+                        Director::RequestFireNow(lens.id[0] != '\0' ? std::string{ lens.id }
+                                                                   : std::string{ lens.prompt });
+                    }
+                    ImGui::EndDisabled();
 
                     // Declared, never inferred from the name above — which is a
                     // label the user is free to edit, and a rename that
@@ -506,6 +522,11 @@ namespace AgencyEngine::UI
             Note("Next ask counts down in in-game minutes, so it stretches and compresses with the timescale "
                  "rather than with the clock. Several lenses coming due at once is ordinary and simply "
                  "produces several asks.");
+            Note("'Ask now' asks that one lens on the next pass whatever its clock says, and whatever the "
+                 "follower and combat gates say. It spends the clock like any other ask - so it costs that "
+                 "lens its next natural ask, and the cooldown too if it lands. It is the button for tuning one "
+                 "prompt; 'Generate an impulse now' on the Status page takes whichever lens is nearest due "
+                 "instead.");
             Note("Proposals: tick this for a lens that asks the party to DO something together - a drink, a "
                  "round of sparring, a game. Agreement does not settle a proposal; only the thing happening, or "
                  "a plain refusal, does. 'Sure' followed by nothing is a deferral, and she keeps carrying it.");
