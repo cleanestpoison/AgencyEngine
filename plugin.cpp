@@ -151,6 +151,24 @@ namespace AgencyEngine
                                 return PendingImpulses::GetSpoken(actor->GetFormID());
                             });
 
+                        // The third state the bio needs and the only one that is
+                        // not about what she is carrying: whether the mod just
+                        // handed her the floor. The carried block reads it to
+                        // decide between "raise it" and "it colours what you
+                        // say", which is the difference between a companion
+                        // finding an opening and one changing the subject
+                        // mid-conversation. See PendingImpulse.h.
+                        SkyrimNetAPI::RegisterDecorator(
+                            PendingImpulses::kFloorDecoratorName,
+                            "AgencyEngine: '1' when this companion has just been given a speaking turn to raise "
+                            "what she is carrying, an empty string otherwise.",
+                            [](RE::Actor* actor) -> std::string {
+                                if (!actor) {
+                                    return {};
+                                }
+                                return PendingImpulses::HasTheFloor(actor->GetFormID());
+                            });
+
                         // Nothing this build ships calls this one. It stays
                         // registered for an install whose prompt files are older
                         // than its DLL: Inja resolves decorator names at parse

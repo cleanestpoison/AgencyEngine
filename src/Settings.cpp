@@ -301,14 +301,15 @@ namespace AgencyEngine
             "enabled={} cues={} generateThought={} requireFollower={} "
             "skipInCombat={} playerEvents={} perFollowerEvents={} forcedImpulseChance={}% eventFilter='{}' "
             "lenses=[{}] "
-            "deferOnConversation={} quiet={:.0f}s maxDefer={:.0f}s injectQuietGap={} poll={:.1f}s "
+            "deferOnConversation={} quiet={:.0f}s settle={:.0f}s maxDefer={:.0f}s injectQuietGap={} poll={:.1f}s "
             "verboseLog={} combatContinuousMode={} continuousExitGrace={:.0f}s pendingBioInjection={} "
             "pendingTtl={:.0f} in-game min pendingResolve={:.0f} in-game min "
             "followerEventFilter='{}' ledger={} slots={} veto={}",
             enabled, cues, generateThought,
             requireFollower, skipInCombat, maxEvents, perFollowerEvents, forcedImpulseChance, eventTypeFilter,
             LensSummary(),
-            deferOnConversation, quietSeconds, maxDeferSeconds, injectQuietGap, quietPollSeconds, debugLog,
+            deferOnConversation, quietSeconds, conversationSettleSeconds, maxDeferSeconds, injectQuietGap,
+            quietPollSeconds, debugLog,
             combatContinuousMode, continuousExitGraceSeconds, pendingBioInjection, pendingTtlGameMinutes,
             pendingResolveGameMinutes, followerEventTypeFilter, ledgerEnabled, ledgerSlots, ledgerVeto);
     }
@@ -353,6 +354,7 @@ namespace AgencyEngine
             debugLog = j.value("debugLog", debugLog);
             deferOnConversation = j.value("deferOnConversation", deferOnConversation);
             quietSeconds = j.value("quietSeconds", quietSeconds);
+            conversationSettleSeconds = j.value("conversationSettleSeconds", conversationSettleSeconds);
             maxDeferSeconds = j.value("maxDeferSeconds", maxDeferSeconds);
             injectQuietGap = j.value("injectQuietGap", injectQuietGap);
             quietPollSeconds = j.value("quietPollSeconds", quietPollSeconds);
@@ -432,6 +434,7 @@ namespace AgencyEngine
             put("debugLog", debugLog, shipped.debugLog);
             put("deferOnConversation", deferOnConversation, shipped.deferOnConversation);
             put("quietSeconds", quietSeconds, shipped.quietSeconds);
+            put("conversationSettleSeconds", conversationSettleSeconds, shipped.conversationSettleSeconds);
             put("maxDeferSeconds", maxDeferSeconds, shipped.maxDeferSeconds);
             put("injectQuietGap", injectQuietGap, shipped.injectQuietGap);
             put("quietPollSeconds", quietPollSeconds, shipped.quietPollSeconds);

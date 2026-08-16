@@ -38,6 +38,7 @@
 
   "deferOnConversation": true,
   "quietSeconds": 25.0,
+  "conversationSettleSeconds": 100.0,
   "maxDeferSeconds": 60.0,
   "injectQuietGap": true,
   "quietPollSeconds": 1.0,

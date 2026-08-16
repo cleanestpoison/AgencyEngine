@@ -50,6 +50,20 @@ namespace AgencyEngine::PendingImpulses
     // interchangeable.
     inline constexpr auto kSpokenDecoratorName = "agencyengine_pending_spoken";
 
+    // Whether the mod has just handed this companion a speaking turn: "1"
+    // inside the window below, "" outside it.
+    //
+    // WHY THE BIO NEEDS IT. The carried block used to close by telling her the
+    // subject "is where you steer when the talk gives you room" — on every
+    // dialogue call she made, for as long as she carried it. Mid-conversation a
+    // model reads a pause for breath as room, so she pivoted onto her own
+    // subject in the middle of somebody else's, with no cue involved and
+    // nothing in the log to say why. The block was conflating two states that
+    // are not the same: *carrying* a subject, and *looking for a way in*. Only
+    // the second belongs in her prompt, and only when the mod actually granted
+    // the turn — which is a thing this DLL knows and the template cannot.
+    inline constexpr auto kFloorDecoratorName = "agencyengine_has_the_floor";
+
     // Compatibility only: "carried" / "spoken" / "", the shape the bio prompt
     // used when a companion could hold exactly one impulse. Still registered
     // because Inja resolves decorator names when it *parses* a file — an
@@ -154,6 +168,33 @@ namespace AgencyEngine::PendingImpulses
     // this FormID is not who it was written for, and the UI's Forget button.
     // Returns how many went. Withdraws every slot, like Clear's default.
     std::size_t ClearAll(std::uint32_t formID, std::string_view reason);
+
+    // ---- the floor ---------------------------------------------------------
+    //
+    // Real time, not game time: this is about a conversation happening in the
+    // room, exactly like the cue's own defer clock, and a loading screen in the
+    // middle of it should not extend the turn.
+    //
+    // The window has to exist because the cue is gone by the time it matters.
+    // PumpPendingCues erases the cue at the instant it dispatches the narration,
+    // and SkyrimNet renders her bio some way *after* that — so a decorator that
+    // asked "is a cue outstanding" would answer false on the one call the whole
+    // mechanism is for. What is recorded is therefore the grant, not the cue.
+    //
+    // It is generous on purpose. Overshooting means she stays forward for a line
+    // or two longer than the turn she was given, which is what a person raising
+    // something actually does; undershooting means the cue fires and the bio
+    // still tells her not to go looking, and the speaking turn is wasted.
+    inline constexpr std::chrono::milliseconds kFloorWindow{ 30000 };
+
+    // The mod just gave `formID` a speaking turn. Called from the cue dispatch,
+    // once the narration has actually reached SkyrimNet — a cue that failed to
+    // send granted nothing.
+    void GrantFloor(std::uint32_t formID);
+
+    // The decorator path for kFloorDecoratorName: "1" while the grant above is
+    // inside kFloorWindow, "" otherwise.
+    std::string HasTheFloor(std::uint32_t formID);
 
     // Compatibility shim for a bio prompt older than multi-carry: "carried" when
     // she is carrying anything unsaid, "spoken" when the only thing open is

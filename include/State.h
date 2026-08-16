@@ -185,6 +185,12 @@ namespace AgencyEngine
         // the audio reading alone in that state would say "quiet for 40 s"
         // about a room where the player is mid-sentence with a shopkeeper.
         bool         inVanillaDialogue = false;
+        // The party's own conversation is still open — somebody took a turn
+        // less than conversationSettleSeconds ago. Held for the UI for the same
+        // reason as the flag above: it is the state that silently holds every
+        // cue, and the audio reading alone cannot report it. Reads false with
+        // deferOnConversation off, because the hold does not apply then.
+        bool         inConversation = false;
         bool         deliveryPending = false;   // at least one cue is waiting
         // Real seconds the oldest waiting cue has been held, for the UI.
         double       deliveryHeldSeconds = 0.0;

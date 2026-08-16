@@ -48,8 +48,24 @@ _Avoid_: narration text, dialogue, script
 **Cue**:
 The vague direct narration that announces a fresh carry — she has something on her mind — granting the
 speaking turn and naming no subject, because the bio supplies the material. One per companion,
-coalescing across however many carries; it waits for a lull, and expiring simply drops it.
+coalescing across however many carries; it waits for the **settle**, not merely for a lull, and
+expiring simply drops it.
 _Avoid_: announcement, nudge, prompt
+
+**Settle**:
+How long since the last conversational turn before the exchange counts as *over* rather than paused.
+A second, longer threshold on the same clock the quiet check reads, and the two ask different
+questions: quiet says nobody is mid-utterance, the settle says the conversation has ended. Twenty-five
+seconds of silence is an ordinary beat in a group chat, and a cue fired into one reads as a companion
+changing the subject. A cue waits for both, and its expiry clock stops while it waits.
+_Avoid_: cooldown (which is lens cadence), timeout, grace period
+
+**The floor**:
+The speaking turn a cue grants, for the half-minute it lasts. The one thing that distinguishes
+*carrying* a subject from *looking for a way in*: with the floor she is told to raise it, and without
+it the subject only colours what she is already saying. Recorded as a grant rather than read off the
+cue, which is erased before the prompt renders.
+_Avoid_: turn (ambiguous with a conversational turn), permission, trigger
 
 **Drift**:
 A carried impulse colouring what she says next through her bio, with no turn granted. What happens with

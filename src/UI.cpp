@@ -111,6 +111,12 @@ namespace AgencyEngine::UI
                 ImGui::TextColored(kWarn, "%s", "Waiting for a loaded save.");
             } else if (state.inFlight) {
                 ImGui::TextColored(kGood, "%s", "Generating an impulse now.");
+            } else if (state.deliveryPending && (state.inConversation || state.inVanillaDialogue)) {
+                // The give-up clock is stopped while a conversation is running,
+                // so quoting it here would show a frozen number and read as a
+                // stall. What is actually happening is the wait, so say that.
+                ImGui::TextColored(kWarn, "Carried - a cue is held until the %s conversation is over.",
+                                   state.inVanillaDialogue ? "current" : "party's");
             } else if (state.deliveryPending) {
                 ImGui::TextColored(kWarn, "Carried - a cue is waiting for a gap in the conversation (%.0f s of "
                                            "%.0f).",
@@ -255,6 +261,19 @@ namespace AgencyEngine::UI
                 } else {
                     ImGui::Text("Quiet for %.1f s (threshold %.0f s).", state.quiet.msSinceAudioEnded / 1000.0,
                                 settings.quietSeconds);
+                    // The one hold that looks like nothing from the line above:
+                    // the room is silent by every audio signal and a cue is
+                    // still held, because the exchange around the gap has not
+                    // finished. Without this the Conversation panel says "quiet
+                    // for 40 s" about a party that is plainly mid-conversation.
+                    if (state.inConversation) {
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextColored(kNote,
+                                           "Still in a conversation - a gap this size is a pause, not the end of "
+                                           "one. Nothing is cued until %.0f s after the last turn.",
+                                           settings.conversationSettleSeconds);
+                        ImGui::PopTextWrapPos();
+                    }
                 }
             }
 
@@ -405,6 +424,16 @@ namespace AgencyEngine::UI
                        "queue, this long since the last NPC audio ended, and this long since anyone took a\n"
                        "dialogue turn. The dialogue-turn clock is what makes the number mean anything - on\n"
                        "audio alone, you composing a line reads as total silence.");
+            dirty |= ImGui::SliderFloat("Conversation is over after (real seconds, default 100)",
+                                        &s.conversationSettleSeconds, 0.0f, 300.0f, "%.0f");
+            HelpMarker("The setting above asks whether anybody is speaking right now. This one asks whether\n"
+                       "there is still a conversation going on around the gap, and they are not the same\n"
+                       "question. Twenty-five seconds of nobody speaking is an ordinary beat in a group\n"
+                       "chat - you composing a longer line, or reading two replies - and a cue fired into\n"
+                       "it reads as a companion changing the subject rather than finding an opening.\n\n"
+                       "A cue set during a conversation is held, and its 'give up after' clock is stopped\n"
+                       "while it waits, so a long chat delays the cue instead of deleting it.\n\n"
+                       "Set this below the silence above and it does nothing.");
             dirty |= ImGui::SliderFloat("Give up after (real seconds, default 60)", &s.maxDeferSeconds, 5.0f, 300.0f,
                                         "%.0f");
             HelpMarker("How long a cue waits for that silence before it is dropped. Dropping it costs the\n"

@@ -297,6 +297,26 @@ namespace AgencyEngine
         // line, then the LLM generating the reply — reads as total silence, and
         // 17s was routinely reached in the middle of an exchange.
         float quietSeconds = 25.0f;
+        // How long since the last conversational turn before the exchange counts
+        // as *over* rather than merely paused.
+        //
+        // A second, longer threshold on the same clock, and the two ask different
+        // questions. quietSeconds asks whether anybody is mid-utterance; this asks
+        // whether there is still a conversation going on around the gap. Twenty-five
+        // seconds of nobody speaking is an ordinary beat in a group chat — you
+        // composing a longer line, or reading two followers' replies — and a cue
+        // fired into it does not read as a companion finding an opening. It reads
+        // as one changing the subject.
+        //
+        // The same argument as the vanilla-dialogue hold above it, applied to
+        // SkyrimNet's own conversations: an exchange with a gap in it is still an
+        // exchange. Unlike that hold this one *is* inside deferOnConversation,
+        // because a conversation with the party is exactly what that switch is
+        // about — cutting across a quest NPC is not a preference, and this is.
+        //
+        // Set below quietSeconds it does nothing, which is the escape hatch for
+        // anybody who wants the old behaviour without switching deferral off.
+        float conversationSettleSeconds = 100.0f;
         // How long a pending cue waits for that silence before it is dropped.
         //
         // Dropping it costs the announcement and nothing else: the impulse

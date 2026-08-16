@@ -98,6 +98,7 @@ namespace
         // Every one of these is still at its shipped value, and a file that
         // named them would pin them for good.
         CHECK(text.find("quietSeconds") == std::string::npos);
+        CHECK(text.find("conversationSettleSeconds") == std::string::npos);
         CHECK(text.find("ledgerSlots") == std::string::npos);
         CHECK(text.find("intervalGameMinutes") == std::string::npos);
         CHECK(text.find("cooldownGameMinutes") == std::string::npos);

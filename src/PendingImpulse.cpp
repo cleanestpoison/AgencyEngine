@@ -22,6 +22,17 @@ namespace AgencyEngine::PendingImpulses
         // lock would only create an order to get wrong.
         std::vector<LedgerSlot> g_ledger;
 
+        // When each companion was last handed a speaking turn. Its own lock, and
+        // not g_lock: the cue dispatch writes this from the main thread in the
+        // same breath as a Papyrus call, and the decorator reads it from
+        // SkyrimNet's render — neither has any business waiting on a ledger
+        // eviction. Nothing else reads it, so there is no order to get wrong.
+        //
+        // A vector because the party is four people at the outside and an entry
+        // outlives its window by whatever the next grant happens to sweep.
+        std::mutex                                                            g_floorLock;
+        std::vector<std::pair<std::uint32_t, std::chrono::steady_clock::time_point>> g_floor;
+
         // Slots per character. Kept here rather than threaded through Clear()
         // because Clear is called from six places that have no business knowing
         // about Settings — the UI, the TTL sweep, the restore check — and only
@@ -408,6 +419,35 @@ namespace AgencyEngine::PendingImpulses
         return RenderLocked(formID, true);
     }
 
+    void GrantFloor(std::uint32_t formID)
+    {
+        const auto now = std::chrono::steady_clock::now();
+
+        std::scoped_lock lock{ g_floorLock };
+        // Swept here rather than on the read path, which is the hot one: this
+        // runs at most once per cue and the read runs on every prompt render.
+        std::erase_if(g_floor, [&](const auto& grant) { return now - grant.second >= kFloorWindow; });
+
+        const auto it = std::ranges::find_if(g_floor, [&](const auto& grant) { return grant.first == formID; });
+        if (it != g_floor.end()) {
+            it->second = now;
+            return;
+        }
+        g_floor.emplace_back(formID, now);
+    }
+
+    std::string HasTheFloor(std::uint32_t formID)
+    {
+        const auto now = std::chrono::steady_clock::now();
+
+        std::scoped_lock lock{ g_floorLock };
+        const auto it = std::ranges::find_if(g_floor, [&](const auto& grant) { return grant.first == formID; });
+        if (it == g_floor.end() || now - it->second >= kFloorWindow) {
+            return {};
+        }
+        return "1";
+    }
+
     bool Clear(std::uint32_t formID, std::string_view lens, std::string_view reason, Disposition disposition)
     {
         Entry removed;
@@ -736,6 +776,13 @@ namespace AgencyEngine::PendingImpulses
             // belongs to the save that was just loaded.
             g_loadedSaveId.clear();
             g_dirty = false;
+        }
+        {
+            // A speaking turn granted in the save we just left is not one she
+            // holds in this one. Cheap, and the alternative is a companion
+            // opening on a subject nobody in the loaded game has heard of.
+            std::scoped_lock lock{ g_floorLock };
+            g_floor.clear();
         }
         if (dropped > 0) {
             logger::debug("Pending impulses: dropped {} in-memory entr(ies) on load — reloading from the sidecar",

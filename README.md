@@ -32,8 +32,10 @@ whenever a follower is present and you're not in combat:
    one overwriting the other.
 5. Set a **cue** for her: a vague direct narration — she has something on her mind — that grants her a speaking
    turn and names no subject, because the bio already carries it. One pending cue per companion however many
-   impulses she picks up, and it waits for the party to go quiet before it goes out. She writes her own line; the
-   plugin only supplies the agenda.
+   impulses she picks up, and it waits for the conversation to be *over* before it goes out — not merely for a
+   lull, which in a group chat is usually somebody thinking. She writes her own line; the plugin only supplies
+   the agenda. Until the cue fires, the subject only colours what she is already saying: she is carrying it, not
+   looking for a way into it.
 6. Optionally (*Also generate a private thought*, on by default) ask SkyrimNet for an unvoiced thought from the
    speaker about what she has just decided she wants to raise. It is audienced to her alone and lands in her event
    history — which is where this mod's own prompt reads thoughts back from, so it is the one thing in the loop

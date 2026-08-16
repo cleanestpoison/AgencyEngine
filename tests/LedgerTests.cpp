@@ -403,6 +403,36 @@ namespace
         // was ever answered.
         CHECK(!Ledger::LedgerSuppresses(kSerana, "her father", kAspiration));
     }
+
+    // The bio's two closings turn on this one string, and getting it wrong is
+    // silent in both directions: stuck on, she interrupts every conversation
+    // she is in; stuck off, the cue fires and her prompt still tells her not to
+    // go looking, so the speaking turn is spent on nothing.
+    //
+    // The window's *expiry* is not covered here — it is 30 real seconds and
+    // there is no clock to move — so what is tested is the grant, its scope,
+    // and that a load does not carry a turn across into another save.
+    void TheFloorIsGrantedToOneCompanionAtATime()
+    {
+        Begin("a speaking turn is granted to the companion it was cued for, and to nobody else");
+
+        CHECK(Ledger::HasTheFloor(kSerana).empty());
+
+        Ledger::GrantFloor(kSerana);
+        CHECK(Ledger::HasTheFloor(kSerana) == "1");
+        // Standing next to somebody who was given a turn is not being given one.
+        CHECK(Ledger::HasTheFloor(kLydia).empty());
+
+        Ledger::GrantFloor(kLydia);
+        CHECK(Ledger::HasTheFloor(kSerana) == "1");
+        CHECK(Ledger::HasTheFloor(kLydia) == "1");
+
+        // A turn granted in the save we just left is not one she holds in this
+        // one; Reset runs on kNewGame and kPostLoadGame.
+        Ledger::Reset();
+        CHECK(Ledger::HasTheFloor(kSerana).empty());
+        CHECK(Ledger::HasTheFloor(kLydia).empty());
+    }
 }
 
 int main()
@@ -424,6 +454,7 @@ int main()
     SaidAndUnsaidRenderSeparately();
     AnUnansweredCarryReleasesItsSlot();
     ClearAllTakesEverythingSheIsCarrying();
+    TheFloorIsGrantedToOneCompanionAtATime();
 
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

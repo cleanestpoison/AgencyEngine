@@ -297,12 +297,56 @@ namespace AgencyEngine::Director
             return NowMs() - closed < static_cast<std::int64_t>(settings.quietSeconds * 1000.0f);
         }
 
+        // ---- the party's own conversation ----------------------------------
+        //
+        // IsQuiet below answers "is anybody speaking right now". This answers
+        // "is there still a conversation going on around this gap", and they
+        // are not the same question — which is the whole bug this exists for.
+        //
+        // quietSeconds is 25 by default, and twenty-five seconds of nobody
+        // speaking is an ordinary beat in a group chat: the player composing a
+        // longer line, or reading two followers' replies. Every signal IsQuiet
+        // has reads that as an empty room, because every one of them is
+        // instantaneous. So the cue went out mid-exchange and the companion
+        // changed the subject — the same failure the vanilla-dialogue hold
+        // above was written for, with a SkyrimNet conversation in place of a
+        // topic list.
+        //
+        // The fix is a second, longer threshold on the same clock rather than a
+        // bigger quietSeconds: raising that one would also delay every cue into
+        // genuine silence, and would move `tail_live` and the injected gap with
+        // it. This reads the same two clocks IsQuiet does and asks them for a
+        // longer answer.
+        //
+        // Both clocks, for the reason ConversationSinceCue reads both: the
+        // dialogue clock is the load-bearing one because it sees the player's
+        // half, which makes no audio at all, and the audio clock catches an NPC
+        // line that produced no dialogue event.
+        bool InConversation(const Settings& settings, const QuietReading& reading)
+        {
+            const auto settleMs = static_cast<std::int64_t>(settings.conversationSettleSeconds * 1000.0f);
+
+            // -1 is "nothing has been seen yet", not "just now" — a save with no
+            // dialogue in it is not a conversation anybody is in the middle of.
+            const auto sinceDialogue = SkyrimNetAPI::MsSinceLastDialogue();
+            if (sinceDialogue >= 0 && sinceDialogue < settleMs) {
+                return true;
+            }
+            // 0 is documented as "no audio has played yet", same distinction.
+            return reading.valid && reading.msSinceAudioEnded > 0 && reading.msSinceAudioEnded < settleMs;
+        }
+
         // Is the party quiet enough to speak into?
         //
         // Three signals sampled together in Papyrus, SkyrimNet's own dialogue
         // clock, and the vanilla topic list above. Every uncertain case
         // resolves to "not quiet": a late impulse costs nothing, and an early
         // one talks over the player.
+        //
+        // Deliberately unchanged by the settle above. This predicate also
+        // answers `tail_live` for the prompt, which wants "is somebody talking
+        // now", and folding the longer question into it would have the model
+        // told the party is mid-conversation a minute after it stopped.
         bool IsQuiet(const Settings& settings, const GameSnapshot& snap, const QuietReading& reading)
         {
             // First, because it is the one signal that does not need the
@@ -1924,7 +1968,13 @@ namespace AgencyEngine::Director
             // preference, it is the mod talking over the game, and somebody who
             // switched deferral off did not ask for that.
             const bool inDialogue = InVanillaDialogue(settings, snap);
-            const bool quiet = !inDialogue && (!settings.deferOnConversation || IsQuiet(settings, snap, reading));
+            // Inside the switch, unlike the vanilla-dialogue hold above it: a
+            // conversation with the party is precisely what deferOnConversation
+            // is a preference about, and somebody who switched it off asked for
+            // cues that do not wait on the party's own talk.
+            const bool inConversation = settings.deferOnConversation && InConversation(settings, reading);
+            const bool quiet = !inDialogue && !inConversation &&
+                               (!settings.deferOnConversation || IsQuiet(settings, snap, reading));
             const bool waiting = suspended || WithinResumeSettle();
 
             {
@@ -1944,7 +1994,16 @@ namespace AgencyEngine::Director
                     // over the player for dropping the cue a minute into it.
                     // Time the player spent talking to somebody else is not
                     // time this cue spent failing to find a gap.
-                    if (suspended || inDialogue) {
+                    //
+                    // The party's own conversation is the same argument again,
+                    // and the settle makes it sharper rather than weaker: the
+                    // hold runs for conversationSettleSeconds *past* the last
+                    // word, which is 100 by default against a 60-second budget.
+                    // Adding the settle without stopping the clock here would
+                    // not fix the interruption, it would delete the cue instead
+                    // — every one set during a chat would expire before the
+                    // gate it is waiting on could ever open.
+                    if (suspended || inDialogue || inConversation) {
                         it->setAtMs += sinceLastPump;
                     }
                     const auto heldMs = now - it->setAtMs;
@@ -2058,7 +2117,17 @@ namespace AgencyEngine::Director
                             logger::error("The cue for {} failed to reach SkyrimNet — she keeps carrying it, and it "
                                           "colours what she says next",
                                           cue.speakerName);
+                            return;
                         }
+                        // Only on success, and only here. This is what turns the
+                        // carried block in her bio from "it colours what you say"
+                        // into "raise it" — so a cue that never reached SkyrimNet
+                        // must not license her to open a subject she was given no
+                        // turn for. Stamped before SkyrimNet renders the prompt
+                        // this narration produces, which is the one call it is
+                        // for; the cue itself is already erased by now, which is
+                        // why the grant is recorded rather than the cue read.
+                        PendingImpulses::GrantFloor(cue.formID);
                     });
                 }
             }
@@ -2358,7 +2427,11 @@ namespace AgencyEngine::Director
                 // the asks below go on being made through one. Only delivery
                 // waits.
                 TrackDialogueMenu(settings, snap, snapshotFresh);
-                WithState([&](Status& state) { state.inVanillaDialogue = InVanillaDialogue(settings, snap); });
+                WithState([&](Status& state) {
+                    state.inVanillaDialogue = InVanillaDialogue(settings, snap);
+                    state.inConversation =
+                        settings.deferOnConversation && InConversation(settings, state.quiet);
+                });
 
                 // Outside every gate below, including the freshness one: while
                 // the game is suspended this is the only thing that runs, and
