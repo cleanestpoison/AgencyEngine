@@ -71,6 +71,9 @@ namespace AgencyEngine::Director
         // When the game last came back from a menu or the background. 0 means
         // it has not been suspended yet this session, which is not a wait.
         std::atomic<std::int64_t> g_resumedAtMs{ 0 };
+        // When the vanilla topic list last came down. 0 means it has not been
+        // seen open this session, which is not a wait either.
+        std::atomic<std::int64_t> g_dialogueMenuClosedAtMs{ 0 };
 
         std::int64_t NowMs()
         {
@@ -224,13 +227,90 @@ namespace AgencyEngine::Director
         std::mutex                 g_resolveRequestLock;
         std::deque<ResolveRequest> g_resolveRequests;
 
+        // ---- the vanilla conversation --------------------------------------
+        //
+        // The player talking to a quest NPC through Skyrim's own topic list is
+        // invisible to every other signal in this file, and each one is blind
+        // for its own reason rather than by oversight:
+        //
+        //   * gamePaused is UI::GameIsPaused(), which counts menus flagged
+        //     kPausesGame. DialogueMenu is not one, so the simulation — and
+        //     therefore game time, and therefore every lens clock — runs
+        //     straight through a conversation.
+        //   * recording, speechQueue and msSinceAudioEnded are SkyrimNet's
+        //     microphone, SkyrimNet's TTS queue and SkyrimNet's audio clock.
+        //     Vanilla dialogue is engine audio and touches none of them. The
+        //     one partial exception is SkyrimNet's own voice-over of the
+        //     player's chosen topic and of otherwise-silent NPCs, which does
+        //     move the audio clock — which is why this misfires on some
+        //     conversations and not others, rather than on all of them.
+        //   * MsSinceLastDialogue() watches SkyrimNet's own dialogue event
+        //     types. Vanilla dialogue emits none of them.
+        //
+        // So the party reads *maximally* quiet while the player is reading a
+        // topic list, which is the one reading that lets a cue out. Held here
+        // as a menu flag plus a settle, because DialogueMenu comes down before
+        // the parting line has finished playing: the close is the start of a
+        // wait, not the all-clear.
+
+        // Watches the topic list open and close. Director thread, once a pass.
+        void TrackDialogueMenu(const Settings& settings, const GameSnapshot& snap, bool snapshotFresh)
+        {
+            static bool previous = false;
+
+            // A stale snapshot describes the menu as it was before the main
+            // thread stopped running our tasks, so an edge read out of it is an
+            // edge of unknown age — and stamping a close from one would start
+            // the settle at the wrong moment entirely. Hold position; every
+            // consumer below is gated on the same staleness anyway.
+            if (!snapshotFresh || !snap.valid) {
+                return;
+            }
+            if (previous == snap.dialogueMenuOpen) {
+                return;
+            }
+            previous = snap.dialogueMenuOpen;
+
+            if (snap.dialogueMenuOpen) {
+                logger::info("Player is in a vanilla conversation — nothing is cued while the topic list is up");
+            } else {
+                g_dialogueMenuClosedAtMs.store(NowMs());
+                logger::info("Vanilla conversation ended — {:.0f}s of quiet before anything can be cued",
+                             settings.quietSeconds);
+            }
+        }
+
+        // Is the player mid-conversation with somebody else, or only just out of
+        // one? Not subject to any setting: see the note at the call site.
+        bool InVanillaDialogue(const Settings& settings, const GameSnapshot& snap)
+        {
+            if (snap.dialogueMenuOpen) {
+                return true;
+            }
+            const auto closed = g_dialogueMenuClosedAtMs.load();
+            if (closed == 0) {
+                return false;
+            }
+            // The same threshold the audio signals use, deliberately. It is
+            // already the answer to "how long since anyone spoke", and a
+            // conversation that has just ended is exactly that question.
+            return NowMs() - closed < static_cast<std::int64_t>(settings.quietSeconds * 1000.0f);
+        }
+
         // Is the party quiet enough to speak into?
         //
-        // Three signals sampled together in Papyrus. Every uncertain case
+        // Three signals sampled together in Papyrus, SkyrimNet's own dialogue
+        // clock, and the vanilla topic list above. Every uncertain case
         // resolves to "not quiet": a late impulse costs nothing, and an early
         // one talks over the player.
-        bool IsQuiet(const Settings& settings, const QuietReading& reading)
+        bool IsQuiet(const Settings& settings, const GameSnapshot& snap, const QuietReading& reading)
         {
+            // First, because it is the one signal that does not need the
+            // Papyrus reading to be valid — and because it is true in the very
+            // case the rest of them read as an empty room.
+            if (InVanillaDialogue(settings, snap)) {
+                return false;
+            }
             // No reading yet, or the poll stopped coming back — the bridge
             // script may be missing or the VM stalled.
             if (!reading.valid) {
@@ -278,15 +358,26 @@ namespace AgencyEngine::Director
         // The reading behind a hold or a release, for the log. Reconstructing
         // this from SkyrimNet's own debug output is not a thing anyone should
         // have to do twice.
-        std::string DescribeReading(const QuietReading& reading)
+        std::string DescribeReading(const GameSnapshot& snap, const QuietReading& reading)
         {
+            // Reported whatever the Papyrus reading is worth, and ahead of it:
+            // it is the one signal here that is still meaningful when the
+            // bridge script is missing, and the only one that explains a hold
+            // the other four cannot account for.
+            const auto        closed = g_dialogueMenuClosedAtMs.load();
+            const std::string menu =
+                snap.dialogueMenuOpen ? std::string{ "open" }
+                : closed == 0         ? std::string{ "none seen" }
+                                      : std::format("closed {}ms ago", NowMs() - closed);
+
             if (!reading.valid) {
-                return "no reading yet";
+                return std::format("no reading yet, topicList={}", menu);
             }
             const auto sinceDialogue = SkyrimNetAPI::MsSinceLastDialogue();
-            return std::format("recording={} speechQueue={} audio={}ms dialogue={}", reading.recording,
+            return std::format("recording={} speechQueue={} audio={}ms dialogue={} topicList={}", reading.recording,
                                reading.speechQueue, reading.msSinceAudioEnded,
-                               sinceDialogue < 0 ? std::string{ "none seen" } : std::format("{}ms", sinceDialogue));
+                               sinceDialogue < 0 ? std::string{ "none seen" } : std::format("{}ms", sinceDialogue),
+                               menu);
         }
 
         // How long the party has been quiet, phrased for the prompt. Empty when
@@ -407,6 +498,22 @@ namespace AgencyEngine::Director
 
                 if (auto* ui = RE::UI::GetSingleton()) {
                     snap.gamePaused = ui->GameIsPaused();
+                    // GameIsPaused() will not answer this either: it counts
+                    // *pausing* menus, and DialogueMenu is not one — its flags
+                    // are kUpdateUsesCursor | kDontHideCursorWhenTopmost, so
+                    // the simulation runs through an entire conversation.
+                    //
+                    // Polled here rather than driven by a MenuOpenCloseEvent
+                    // sink on purpose. Riding the snapshot means this flag
+                    // inherits the staleness handling that everything else
+                    // here has: if the main thread stops running our tasks,
+                    // the flag goes stale and snapshotFresh goes false
+                    // together, so the two can never disagree. An independent
+                    // sink would go on asserting "the menu is open" across a
+                    // stall we cannot see the end of. The cost is up to one
+                    // pass of latency on the open edge, against a settle
+                    // measured in tens of seconds.
+                    snap.dialogueMenuOpen = ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME);
                 }
                 // Main::gameActive is the engine's own WM_ACTIVATE flag, which
                 // is why this needs no Win32. GameIsPaused() will not answer
@@ -932,7 +1039,7 @@ namespace AgencyEngine::Director
             // exists to bypass gating, and someone pressing it mid-conversation
             // means it, so reporting a live tail there would quietly take the
             // forced roll away in exactly the case it was asked for.
-            context["tail_live"] = !manual && !IsQuiet(settings, reading);
+            context["tail_live"] = !manual && !IsQuiet(settings, snap, reading);
 
             // The forced-turn threshold, as a percent the template rolls
             // `random` against. The roll itself stays in the prompt because
@@ -1442,9 +1549,10 @@ namespace AgencyEngine::Director
 
             if (verbose) {
                 logger::trace(
-                    "Snapshot: valid={} gameTime={} location='{}' inCombat={} paused={} windowActive={} followers={}",
+                    "Snapshot: valid={} gameTime={} location='{}' inCombat={} paused={} windowActive={} "
+                    "topicList={} followers={}",
                     snap.valid, FormatGameTime(snap.gameDays), snap.location, snap.playerInCombat, snap.gamePaused,
-                    snap.windowActive, snap.followers.size());
+                    snap.windowActive, snap.dialogueMenuOpen, snap.followers.size());
             }
 
             if (!snap.valid) {
@@ -1772,7 +1880,7 @@ namespace AgencyEngine::Director
         // readable — that is the whole point. This is the only thing in the
         // file whose clock has to keep being *stopped* while the game is
         // suspended, and it cannot do that from behind a freshness guard.
-        void PumpPendingCues(const Settings& settings, bool suspended)
+        void PumpPendingCues(const Settings& settings, const GameSnapshot& snap, bool suspended)
         {
             static std::int64_t lastPumpMs = 0;
 
@@ -1809,7 +1917,14 @@ namespace AgencyEngine::Director
             const auto entries = PendingImpulses::Snapshot();
             QuietReading reading;
             WithState([&](Status& state) { reading = state.quiet; });
-            const bool quiet = !settings.deferOnConversation || IsQuiet(settings, reading);
+            // Outside the deferOnConversation switch, and deliberately so.
+            // That setting is a preference about SkyrimNet conversations —
+            // whether a cue waits for the party's own talk to finish. Cutting
+            // across the player's conversation with a quest NPC is not a
+            // preference, it is the mod talking over the game, and somebody who
+            // switched deferral off did not ask for that.
+            const bool inDialogue = InVanillaDialogue(settings, snap);
+            const bool quiet = !inDialogue && (!settings.deferOnConversation || IsQuiet(settings, snap, reading));
             const bool waiting = suspended || WithinResumeSettle();
 
             {
@@ -1821,7 +1936,15 @@ namespace AgencyEngine::Director
                     // the cue is dropped for a conversation that never happened.
                     // Push the start forward instead, so suspended time is not
                     // held time.
-                    if (suspended) {
+                    //
+                    // A vanilla conversation is the same argument and is not
+                    // optional: maxDeferSeconds is 60 by default and a quest
+                    // conversation runs well past it, so holding delivery
+                    // *without* stopping this clock would only trade talking
+                    // over the player for dropping the cue a minute into it.
+                    // Time the player spent talking to somebody else is not
+                    // time this cue spent failing to find a gap.
+                    if (suspended || inDialogue) {
                         it->setAtMs += sinceLastPump;
                     }
                     const auto heldMs = now - it->setAtMs;
@@ -1928,7 +2051,7 @@ namespace AgencyEngine::Director
                 logger::info("The party went quiet after {:.0f}s — cueing {}: {} fresh carr(ies) behind the cue, "
                              "{} open in her bio. Reading: {}",
                              pending.heldMs / 1000.0, pending.cue.speakerName, pending.cue.carries, open,
-                             DescribeReading(reading));
+                             DescribeReading(snap, reading));
                 if (auto* tasks = SKSE::GetTaskInterface()) {
                     tasks->AddTask([cue = pending.cue]() {
                         if (!PapyrusBridge::DirectNarration(CueText(cue), cue.speakerUuid, cue.targetUuid)) {
@@ -2229,11 +2352,19 @@ namespace AgencyEngine::Director
                 }
                 wasSuspended = suspended;
 
+                // Ahead of the cue pump, which reads the timestamp it stamps.
+                // Not a gate of its own — a vanilla conversation is a running,
+                // readable world, unlike everything IsSuspended() covers, and
+                // the asks below go on being made through one. Only delivery
+                // waits.
+                TrackDialogueMenu(settings, snap, snapshotFresh);
+                WithState([&](Status& state) { state.inVanillaDialogue = InVanillaDialogue(settings, snap); });
+
                 // Outside every gate below, including the freshness one: while
                 // the game is suspended this is the only thing that runs, and
                 // stopping the defer clock is exactly what it is here to do.
                 if (available) {
-                    PumpPendingCues(settings, suspended);
+                    PumpPendingCues(settings, snap, suspended);
                 }
 
                 // Ahead of the impulse gates, and not subject to them: holding

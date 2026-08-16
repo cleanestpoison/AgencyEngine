@@ -121,6 +121,16 @@ namespace AgencyEngine
         // running the clock, the followers and us. See the suspension note in
         // Director.cpp.
         bool        windowActive = true;
+        // The vanilla topic-list menu is up — the player is in an ordinary
+        // Skyrim conversation with somebody.
+        //
+        // A *third* question again, implied by neither of the two above.
+        // DialogueMenu carries no kPausesGame flag, so gamePaused stays false
+        // through the whole of one; the window is plainly active; and every
+        // signal behind IsQuiet() is scoped to SkyrimNet's own conversations,
+        // which this is not. Nothing else in this struct or in the quiet
+        // reading can see it. See the vanilla-dialogue note in Director.cpp.
+        bool        dialogueMenuOpen = false;
         std::vector<FollowerInfo> followers;
     };
 
@@ -165,6 +175,16 @@ namespace AgencyEngine
         // UI. The impulse itself is carried the moment it comes back; what waits
         // for the party to stop talking is the cue that announces it.
         QuietReading quiet;
+        // The player is in a vanilla conversation, or inside the settle that
+        // follows one. Refreshed on the Director tick and held here for the UI
+        // alone — the Director asks the predicate itself when it matters.
+        //
+        // Worth a field of its own rather than being folded into `quiet`: it
+        // holds cues whatever `deferOnConversation` says, so the Conversation
+        // panel has to be able to report it with that switch off, and reporting
+        // the audio reading alone in that state would say "quiet for 40 s"
+        // about a room where the player is mid-sentence with a shopkeeper.
+        bool         inVanillaDialogue = false;
         bool         deliveryPending = false;   // at least one cue is waiting
         // Real seconds the oldest waiting cue has been held, for the UI.
         double       deliveryHeldSeconds = 0.0;

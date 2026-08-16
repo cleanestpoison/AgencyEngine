@@ -234,9 +234,19 @@ namespace AgencyEngine::UI
                 }
             }
 
-            if (settings.deferOnConversation || settings.injectQuietGap) {
+            // The vanilla-dialogue hold is not subject to either switch, so the
+            // panel has to appear for it even with both off — otherwise the one
+            // state that silently holds every cue is the one with nothing on
+            // screen to explain it.
+            if (settings.deferOnConversation || settings.injectQuietGap || state.inVanillaDialogue) {
                 ImGui::SeparatorText("Conversation");
-                if (!state.quiet.valid) {
+                if (state.inVanillaDialogue) {
+                    // Ahead of the audio reading, and it has to be: during an
+                    // ordinary Skyrim conversation that reading says the room
+                    // is silent, because it only ever describes SkyrimNet's
+                    // own speech.
+                    ImGui::Text("%s", "Player is in a Skyrim conversation - nothing is cued until it ends.");
+                } else if (!state.quiet.valid) {
                     ImGui::Text("%s", "No reading yet.");
                 } else if (state.quiet.recording) {
                     ImGui::Text("%s", "Player is speaking into the microphone.");
