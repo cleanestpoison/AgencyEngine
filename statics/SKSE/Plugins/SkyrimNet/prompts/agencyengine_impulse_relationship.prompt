@@ -45,8 +45,10 @@ is the day they start saying it — the start of it, not the whole of it.
   saying it to, and because they have decided that person should hear it from them.
 - **Trust named out loud.** They have been relying on someone, or refusing to, and have never said which. They say
   it now rather than let the other work it out alone.
-- **Curiosity about a person.** They have been wondering about one of the people here — their history, their reasons,
-  why they do a particular thing — and they ask them directly.
+- **Curiosity about another companion.** They have been wondering about one of the other companions — their
+  reasons, history, or why they do a particular thing — and ask them directly. Player-directed curiosity belongs
+  to the Curiosity lens only when understanding the player is the payoff. A settled view or grievance stays here;
+  an answer needed for action or an agenda stays with Aspiration.
 
 **Who it is aimed at does not set its rank.** A settled view aimed at {{ player.name }} is wanted exactly as much as
 one aimed at another companion. The order above ranks how well a thing is evidenced, not who it points at — and with

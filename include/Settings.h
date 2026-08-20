@@ -24,14 +24,13 @@ namespace AgencyEngine
     // just two asks, and lenses whose material accumulates at different rates
     // have no business sharing one cadence knob. See docs/adr/0003.
     //
-    // A lens is *content*, not configuration. Its name, its prompt file and its
-    // proposal semantics are properties of a file that ships in the archive
-    // beside the DLL — nobody can author them by typing into the settings page,
-    // and a prompt name that doesn't resolve costs the whole impulse silently.
-    // Only the enable switch, the two cadence numbers and `ledgerSlots` are
-    // preferences. So the shipped roster is kBuiltinLenses below and the config
-    // file stores overrides against it, keyed by `id`. A lens added in a later
-    // release then appears on its own, at its shipped cadence, in a config that
+    // A lens is *content*, not configuration. Its name, prompt file, proposal
+    // semantics and target semantics describe a file that ships beside the DLL
+    // — nobody can author them by typing into the settings page, and a prompt
+    // name that doesn't resolve costs the whole impulse silently. Only the
+    // enable switch, the two cadence numbers and `ledgerSlots` are preferences.
+    // The shipped roster is `kBuiltinLenses` below; the config file stores overrides against it, keyed by `id`.
+    // A lens added in a later release appears on its own, at its shipped cadence, in a config that
     // already exists.
     struct Lens
     {
@@ -90,9 +89,14 @@ namespace AgencyEngine
         // a six-slot ring holds nearly all of it and vetoes the lens into
         // silence. Three gives a natural four-proposal rotation instead.
         int  ledgerSlots = 0;
+        // Some builtins narrow the shared target contract. This is declared
+        // content rather than inferred from a name or trusted only to prompt
+        // prose, so an invalid model target cannot change the lens's semantics.
+        // Hand-authored lenses keep the shared any-present-participant default.
+        bool playerTargetOnly = false;
     };
 
-    inline constexpr int kMaxLenses = 6;
+    inline constexpr int kMaxLenses = 7;
 
     // The lens roster this build ships, and the source of every default in the
     // table below. Changing a cadence here changes it for every install that has
@@ -101,11 +105,10 @@ namespace AgencyEngine
     // the settings page and saving something unrelated.
     //
     // Cadence, in game hours (interval / cooldown): Aspiration 2/8 is the
-    // workhorse and asks often. Relationship's material — standing that has gone
-    // unsaid — accumulates over in-game days, so a long interval buys fewer quiet
-    // asks against the same data rather than more answers. Activity's danger is
-    // repeat-proposing ("spar with me" again tonight), so it takes much the
-    // longest cooldown of the three. See docs/adr/0003.
+    // workhorse and asks often. Relationship and Curiosity accumulate more
+    // slowly, so both ask every 6 hours and take 24 hours of extra silence
+    // after a carry. Activity's danger is repeat-proposing ("spar with me"
+    // again tonight), so it takes the longest cooldown. See docs/adr/0003.
     //
     // Adding a row: give it an id that will never change (the ledger and the
     // config both key on it), and keep the count under kMaxLenses — the trailing
@@ -114,6 +117,7 @@ namespace AgencyEngine
         { "aspiration", "Aspiration", "agencyengine_impulse_aspiration", true, 120.0f, 480.0f },
         { "relationship", "Relationship", "agencyengine_impulse_relationship", true, 360.0f, 1440.0f },
         { "activity", "Activity", "agencyengine_impulse_activity", true, 240.0f, 2880.0f, true, 3 },
+        { "curiosity", "Curiosity", "agencyengine_impulse_curiosity", true, 360.0f, 1440.0f, false, 0, true },
     };
     inline constexpr int kBuiltinLensCount = static_cast<int>(std::size(kBuiltinLenses));
     static_assert(kBuiltinLensCount <= kMaxLenses, "the shipped roster has to fit in the table");

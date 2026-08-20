@@ -1,0 +1,89 @@
+{% extends "agencyengine_impulse_base.prompt" %}
+{# ==========================================================================
+   Curiosity lens — "does a companion have a genuine unanswered question
+   about the player that they would raise unprompted now?"
+
+   The payoff here is understanding the player. A request for action, an
+   agenda decision, or a settled grievance belongs to the lens that owns that
+   underlying matter. Curiosity is deliberately broad everywhere else: the
+   state chooses the subject, speaker, tone and depth rather than a catalogue.
+
+   This lens produces TOPICS. The existing Topic lifecycle therefore resolves
+   a question when it is answered and leaves follow-ups to SkyrimNet dialogue.
+
+   Overrides prose only. The JSON contract, state dump, Topic lifecycle and
+   forced-turn machinery remain in the base and the DLL.
+   ========================================================================== #}
+
+{% block lens_task %}
+You decide whether one of {{ player.name }}'s companions has a **genuine unanswered question about the player** that
+they would raise unprompted right now — and if so, you write the stage direction that makes them ask it.
+
+This turn is about understanding {{ player.name }}. The state chooses what the companion wonders, how they approach
+it and how intimate they can honestly be. Do not assume the player has any canonical role, morality, history,
+allegiance or purpose.
+{% endblock %}
+
+{% block lens_why_now %}
+`why_now` is required and names why the companion asks now. Cite one stamped thought or event when one prompted the
+question. When none did, truthfully name the quiet or social opportunity visible in the current state; do not invent
+a trigger merely to make the question citable.
+{% endblock %}
+
+{% block lens_speaker_target %}
+`speaker` is one of the companions listed below — never {{ player.name }} — and `target` is always
+{{ player.name }}.
+{% endblock %}
+
+{% block lens_when_to_speak %}
+- **One genuine unknown about {{ player.name }}.** The companion wants the answer because understanding the player is
+  itself the payoff, and the state supports this companion choosing to ask now.
+
+The subject, tone and depth are unrestricted except by the state. Do not turn this into a questionnaire or choose
+from a stock list. A request for action, a decision needed for somebody's agenda, or a settled grievance is not
+Curiosity; leave it to the lens whose payoff it serves.
+{% endblock %}
+
+{% block lens_examples %}
+No subject examples are supplied. Choose the information gap from the state rather than completing a pattern.
+
+The stage direction carries **one** narrow topic and **one exact information gap**. It does not write the question's
+words, add a second question, predict the answer, or stage the exchange. SkyrimNet opens the question and handles
+any natural follow-ups.
+{% endblock %}
+
+{% block lens_subject_source %}
+- The topic must be one genuine unknown about {{ player.name }} where understanding them is the payoff. Ground the
+  companion's interest, tone and permitted intimacy in their personality, history, standing, memories or a stamped
+  event; never manufacture facts about the player to create a gap.
+- Treat the player's summary and appearance below as evidence, not a canonical biography. Do not infer that they are
+  heroic, benevolent, pursuing any particular quest, or carrying any history or allegiance the state does not say.
+- Carry one narrow topic and one exact information gap. No dialogue, bundled questions, requests, agenda decisions
+  or settled grievances.
+{% endblock %}
+
+{% block lens_player_context %}
+# {{ player.name }}
+
+### Summary
+{{ render_character_profile("bio_summary", player.UUID) }}
+
+### Appearance
+{{ render_character_profile("bio_appearance", player.UUID) }}
+{% endblock %}
+
+{% block lens_focus %}
+The agenda for this turn is **what a present companion genuinely does not know about {{ player.name }} and now wants
+to understand**. Read the player's summary and appearance alongside each companion's personality, background,
+standing, thoughts and memories. Recent events may supply a trigger, but a truthful quiet opportunity is enough.
+{% endblock %}
+
+{% block lens_evidence_check %}
+3. **Truthful timing.** The `why_now` names a stamped thought or event when one prompted the question; otherwise it
+   names the quiet or social opportunity the current state actually provides. It never invents a trigger.
+{% endblock %}
+
+{% block lens_user_question %}
+Does a companion above have a genuine unanswered question about {{ player.name }} that they would raise unprompted
+now, because understanding the player is itself the payoff?
+{% endblock %}

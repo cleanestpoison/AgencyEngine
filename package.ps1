@@ -95,7 +95,7 @@ if (-not (Test-Path -LiteralPath $dll)) {
 # Every prompt the shipped defaults dispatch, not just the spine: a lens whose
 # file is missing renders as nothing and costs the whole impulse, which shows up
 # as a lens that is simply always quiet rather than as an error.
-foreach ($name in @('base', 'aspiration', 'relationship', 'activity', 'resolved')) {
+foreach ($name in @('base', 'aspiration', 'relationship', 'activity', 'curiosity', 'resolved')) {
     $prompt = Join-Path $modFolder "SKSE\Plugins\SkyrimNet\prompts\agencyengine_impulse_$name.prompt"
     if (-not (Test-Path -LiteralPath $prompt)) {
         throw "No agencyengine_impulse_$name.prompt in $modFolder — the statics deploy didn't run."

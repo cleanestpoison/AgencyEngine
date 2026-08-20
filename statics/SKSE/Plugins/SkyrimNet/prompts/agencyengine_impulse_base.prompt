@@ -12,12 +12,15 @@
    Blocks a lens may override, ALL of them top level and unconditional:
 
      lens_task            what this turn is looking for, 2-4 sentences
+     lens_why_now         what the required why_now may truthfully cite
+     lens_speaker_target  who may speak and who may be targeted
      lens_when_to_speak   the ordered list of what counts this turn
      lens_examples        matched good/bad pairs in this lens's register
-     lens_focus           one line naming which part of the state is the agenda
      lens_subject_source  the hard constraint naming where a subject may come from
+     lens_player_context  extra state a lens needs about the player
+     lens_focus           one line naming which part of the state is the agenda
+     lens_evidence_check  the final evidence door for why_now
      lens_user_question   the question asked in the [ user ] turn
-
    Deliberately, no block sits inside an `{% raw %}{% if %}{% endraw %}` or a `{% raw %}{% for %}{% endraw %}`, and no lens
    reads a variable this file sets. Cross-template variable scope and blocks
    nested in control flow are the two things about Inja inheritance that were
@@ -117,8 +120,10 @@ The word limit is part of the contract. Count before you return.
 `topic` is the subject as the two of them would name it later — "the coin split", "her father". Not a sentence,
 not a summary — the same subject always produces the same few words.
 
+{% block lens_why_now %}
 `why_now` names the one stamped thought or event in the state that makes the subject surface today — the item
 itself, not a paraphrase of the mood. An impulse that cannot fill this field is not citable and is not the impulse.
+{% endblock %}
 {% if not forced %}
 When nobody has anything:
 ```
@@ -126,8 +131,10 @@ When nobody has anything:
 ```
 {% endif %}
 
+{% block lens_speaker_target %}
 `speaker` is one of the companions listed below — never {{ player.name }}; `target` is {{ player.name }} or
 another of them.
+{% endblock %}
 
 # What counts this turn
 The list is ordered, most wanted first — real from further down beats strained from the top.
@@ -225,6 +232,7 @@ Bad, in every register:
 {% for follower in followers %}
 - {{ follower.name }}
 {% endfor %}
+{% block lens_player_context %}{% endblock %}
 
 {% block lens_focus %}
 Read all of what follows, but the agenda for this turn comes from what each companion is trying to do.
@@ -331,8 +339,10 @@ Check your impulse against three doors. One that fails any of them is not the im
 1. **Not the current undertaking.** Not the errand underway, the destination being walked toward, or the fight in
    progress — and not what the last few exchanges are about.
 2. **Not already raised.** Not on the speaker's "has already raised" list — in those words or any others.
+{% block lens_evidence_check %}
 3. **Citable.** The `why_now` you return names a stamped thought or event that is actually above — not
    remembered, not inferred.
+{% endblock %}
 [ end system ]
 
 [ user ]

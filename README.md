@@ -18,13 +18,14 @@ works at the level of the whole playthrough rather than the party.
 
 ## What it does today
 
-Each **lens** asks on its own in-game clock (Aspiration every 2 game hours, Relationship every 6, Activity every 4),
-whenever a follower is present and you're not in combat:
+Each **lens** asks on its own in-game clock (Aspiration every 2 game hours, Relationship every 6, Activity every 4,
+Curiosity every 6), whenever a follower is present and you're not in combat:
 
 1. Pull the recent SkyrimNet event tail for the player and for each follower.
-2. Render that lens's prompt against the state and send it to the configured LLM. Three ship: *Aspiration* ("is
-   anyone's agenda being ignored?"), *Relationship* ("is anything unsaid between these people?") and *Activity*
-   ("is there something they want to do with these people?").
+2. Render that lens's prompt against the state and send it to the configured LLM. Four ship: *Aspiration* ("is
+   anyone's agenda being ignored?"), *Relationship* ("is anything unsaid between these people?"), *Activity*
+   ("is there something they want to do with these people?") and *Curiosity* ("does a companion have a genuine
+   unanswered question about the player?").
 3. Read back a decision — `{"speaker", "target", "narration"}`, or `{"speaker": null}` for nobody.
 4. On a decision to speak, resolve the named speaker and target against the party and **carry** the stage direction:
    it is held in the DLL and rendered into that companion's own character bio, verbatim, privately, with no LLM
@@ -46,13 +47,13 @@ it twice in a night is a person. The Lenses tab counts carried and quiet asks se
 the ratio.
 
 An ask that *does* land costs its lens a **cooldown** on top of its interval — 8 game hours for Aspiration, 24 for
-Relationship, 48 for Activity — measured from the moment the impulse is recorded rather than from her saying it.
-That is what makes not nagging structural: a lens can't come back to a subject inside its cooldown, because it
-isn't asked.
+Relationship and Curiosity, 48 for Activity — measured from the moment the impulse is recorded rather than from her
+saying it. That is what makes not nagging structural: a lens can't come back to a subject inside its cooldown,
+because it isn't asked.
 
-The target need not be the player. A companion raising something *with another companion* — an old grievance, an
-unsaid affection — is the one thing SkyrimNet's per-NPC loops structurally can't produce, because nothing else sees
-the party as a party.
+Curiosity always targets the player. The other lenses may target another companion instead: an old grievance or
+unsaid affection between companions is the one thing SkyrimNet's per-NPC loops structurally can't produce, because
+nothing else sees the party as a party.
 
 Everything is visible and tunable in-game through the **SKSE Menu Framework** control panel, under a
 **Agency Engine** section with three pages:
@@ -243,6 +244,7 @@ SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_base.prompt         (the sha
 SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_aspiration.prompt
 SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_relationship.prompt
 SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_activity.prompt
+SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_curiosity.prompt
 SKSE/Plugins/SkyrimNet/config/plugins/AgencyEngine/manifest.yaml
 SKSE/Plugins/AgencyEngine.json.example                                 (documentation; never read)
 Scripts/AgencyEngine_Bridge.pex
@@ -276,10 +278,11 @@ when that kind isn't there.
 | Aspiration | Is anyone's agenda being ignored? An aspiration walked past, an errand stuck, an order of operations she disagrees with. | Topics | every 2, then quiet for 8 | — |
 | Relationship | Is anything unsaid between these people? A settled view one companion has been carrying about another. | Topics | every 6, then quiet for 24 | SeverActions, optional |
 | Activity | Is there something they want to *do* with these people? A drink, a round of sparring, a game, restlessness for a fight, an hour of somebody's company. | Proposals | every 4, then quiet for 48 | — |
+| Curiosity | Does a companion have a genuine unanswered question about the player? One information gap, with understanding the player as the payoff. | Topics | every 6, then quiet for 24 | — |
 
-Aspiration is the workhorse and asks often. Relationship's material accumulates over in-game days, so a long
-interval buys fewer quiet asks against the same standing data rather than more answers. Activity's danger is
-repeat-proposing — "spar with me" again tonight — so it takes much the longest cooldown of the three.
+Aspiration is the workhorse and asks often. Relationship's material accumulates over in-game days, while Curiosity
+waits for a genuine unknown and a moment when asking fits; both use the slower 6/24 cadence. Activity's danger is
+repeat-proposing — "spar with me" again tonight — so it takes the longest cooldown.
 
 Aspiration deliberately does **not** own mundane appetites — rest, food, a bed, a drink. Those are Activity's, and
 leaving them in both would split one register across two names instead of asking two questions.
@@ -288,7 +291,7 @@ leaving them in both would split one register across two names instead of asking
 
 The intervals above are **in-game** minutes, and an ask is an LLM call whether or not anyone had anything to say.
 What turns one into the other is Skyrim's `TimeScale` — how many in-game minutes pass in a real one. At vanilla 20
-the shipped roster asks about eighteen times an hour played; at the 6 to 10 heavier modlists run, the identical
+the shipped roster asks about twenty-two times an hour played; at the 6 to 10 heavier modlists run, the identical
 settings ask a third as often. Nothing about the config changes; the bill does.
 
 So the settings page reads the live timescale and prints the real-time length beside every in-game duration it
@@ -318,9 +321,10 @@ deleted outright comes back switched off rather than running.
 Lenses you write yourself are a separate list and are stored whole — see *Writing your own lens* below.
 
 They share a spine. `agencyengine_impulse_base.prompt` owns the JSON contract, the hard constraints, the state dump
-and the forced-turn machinery; each lens `{% extends %}`es it and overrides six prose blocks (`lens_task`,
-`lens_when_to_speak`, `lens_examples`, `lens_focus`, `lens_subject_source`, `lens_user_question`). Fixing a
-constraint means editing one file, and the lenses can't drift apart on the output format.
+and the forced-turn machinery; each lens `{% extends %}`es it and may override ten prose blocks (`lens_task`,
+`lens_why_now`, `lens_speaker_target`, `lens_when_to_speak`, `lens_examples`, `lens_subject_source`,
+`lens_player_context`, `lens_focus`, `lens_evidence_check`, `lens_user_question`). Fixing a shared constraint means
+editing one file, and the lenses can't drift apart on the output format.
 
 No block sits inside an `{% if %}` or a `{% for %}`, and no lens reads a variable the base sets. Blocks nested in
 control flow and cross-template variable scope are the two parts of Inja inheritance that weren't worth betting an
@@ -384,8 +388,8 @@ subjects come round again and get rewritten under a live lens.
 
 The blank rows at the bottom of the Lenses tab are yours. Fill in a name, a prompt file (which resolves to
 `Data/SKSE/Plugins/SkyrimNet/prompts/<name>.prompt` and must `{% extends %}` `agencyengine_impulse_base.prompt`), an
-interval, a cooldown, whether it produces proposals, and its slot count. Six lenses is the table's limit, of which
-three are the mod's own.
+interval, a cooldown, whether it produces proposals, and its slot count. Seven lenses is the table's limit, of
+which four are the mod's own.
 
 A lens you wrote has no shipped row behind it, so unlike the mod's own it is stored whole in the config file, under
 `customLenses` — nothing in an update can add to it, change it or take it away.

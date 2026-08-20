@@ -82,6 +82,12 @@ namespace
     {
         return AgencyEngine::BuiltinLensFor(id);
     }
+    int CountCustomLenses(const Settings& s)
+    {
+        return static_cast<int>(std::ranges::count_if(s.lenses, [](const Lens& lens) {
+            return lens.id[0] == '\0' && lens.prompt[0] != '\0';
+        }));
+    }
 
     // The whole point of the change: a setting nobody touched is not in the
     // file, so a later version that retunes it reaches this install.
@@ -126,8 +132,16 @@ namespace
     {
         Begin("a lens the config has never heard of arrives at its shipped cadence");
 
-        // A file that predates every builtin but one, and moves that one.
-        WriteConfig(R"({ "lenses": { "aspiration": { "intervalGameMinutes": 45 } } })");
+        // A file that predates Curiosity, moves one builtin and already fills
+        // every custom slot the previous shipped roster left available.
+        WriteConfig(R"({
+            "lenses": { "aspiration": { "intervalGameMinutes": 45 } },
+            "customLenses": [
+                { "name": "One", "prompt": "custom_one" },
+                { "name": "Two", "prompt": "custom_two" },
+                { "name": "Three", "prompt": "custom_three" }
+            ]
+        })");
 
         Settings s;
         CHECK(s.Load());
@@ -147,6 +161,29 @@ namespace
         // The one it did move keeps everything else from the build, including
         // the cooldown it never mentioned.
         CHECK(Find(s, "aspiration")->cooldownGameMinutes == kBuiltinLenses[0].cooldownGameMinutes);
+        const auto* curiosity = Find(s, "curiosity");
+        CHECK(curiosity != nullptr);
+        if (curiosity) {
+            CHECK(curiosity->enabled);
+            CHECK(curiosity->intervalGameMinutes == 360.0f);
+            CHECK(curiosity->cooldownGameMinutes == 1440.0f);
+            CHECK(!curiosity->proposal);
+            CHECK(curiosity->playerTargetOnly);
+            CHECK(curiosity->ledgerSlots == 0);
+            CHECK(std::string_view{ curiosity->prompt } == "agencyengine_impulse_curiosity");
+        }
+        CHECK(CountCustomLenses(s) == 3);
+
+        // Saving the old file must preserve its override without pinning the new
+        // shipped row; the next load should still receive Curiosity from the build.
+        CHECK(s.Save());
+        CHECK(ReadConfig().find("curiosity") == std::string::npos);
+
+        Settings reloaded;
+        CHECK(reloaded.Load());
+        CHECK(Find(reloaded, "aspiration")->intervalGameMinutes == 45.0f);
+        CHECK(Find(reloaded, "curiosity") != nullptr);
+        CHECK(CountCustomLenses(reloaded) == 3);
     }
 
     // ADR 0003 retires the weighted draw. Weight 0 was how an install said
@@ -320,6 +357,9 @@ namespace
         CHECK(Find(s, "aspiration")->enabled);
         CHECK(!Find(s, "relationship")->enabled);
         CHECK(!Find(s, "activity")->enabled);
+        // Curiosity did not exist in the legacy roster, so its absence cannot
+        // express a user deletion. It arrives enabled at its shipped cadence.
+        CHECK(Find(s, "curiosity")->enabled);
         // Switched off, not erased: the prompt file is still there to be raised.
         CHECK(std::string_view{ Find(s, "activity")->prompt } == "agencyengine_impulse_activity");
     }

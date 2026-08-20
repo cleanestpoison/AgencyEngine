@@ -113,11 +113,17 @@ Daily life — appetites, downtime, invitation. Drinking, sparring, a game, a st
 restlessness for a fight, an outing, closeness. The only lens that produces **proposals**.
 _Avoid_: fun lens, leisure lens, social lens
 
+**Curiosity lens**:
+A genuine unanswered question a present companion raises about the player because understanding them is
+the payoff. The player is always the target. It carries one exact information gap, never a questionnaire,
+request, agenda decision, or settled grievance.
+_Avoid_: questions lens, backstory lens, interview lens
+
 ### Kinds of impulse
 
 **Topic**:
-An impulse whose payoff is the talking. Produced by the Aspiration and Relationship lenses. Someone
-answering it — agreeing, refusing, arguing it out — resolves it.
+An impulse whose payoff is the talking. Produced by the Aspiration, Relationship, and Curiosity lenses.
+Someone answering it — agreeing, refusing, arguing it out — resolves it.
 _Avoid_: subject, matter
 
 **Proposal**:
@@ -187,6 +193,8 @@ _Avoid_: relationship score, rapport, affinity
   every other way it can die withdraws it
 - Each **Lens** evicts only within its own **Ledger** ring, so lenses cannot bury each other's subjects
 - **Standing** supplies the subject for the **Relationship lens** and the licence for the **Activity lens**
+- The player's summary and appearance join the companion context for the **Curiosity lens**; the subject
+  remains one genuine unknown rather than an assumption about the player's identity or history
 
 ## Example dialogue
 

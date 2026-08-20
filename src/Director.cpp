@@ -452,12 +452,12 @@ namespace AgencyEngine::Director
             std::string key;
             std::string name;    // as typed in the UI; may be blank
             std::string prompt;  // never empty — a lens without one is not usable
-            // The two declared properties that decide what happens to the
-            // impulse afterwards. Carried from the settings row rather than
-            // matched on the name later, because the name is the one field the
-            // user can edit freely.
+            // Declared properties that decide what happens to an impulse after
+            // the response. Carried from the settings row rather than matched
+            // on a display name later.
             bool        proposal = false;
             int         ledgerSlots = 0;
+            bool        playerTargetOnly = false;
             // This lens's own cadence. A quiet ask costs the interval; an ask
             // that carries costs interval + cooldown.
             float       intervalGameMinutes = 120.0f;
@@ -485,7 +485,7 @@ namespace AgencyEngine::Director
                     continue;
                 }
                 out.push_back(LensChoice{ LensKey(lens), lens.name, lens.prompt, lens.proposal, lens.ledgerSlots,
-                                          std::max(lens.intervalGameMinutes, 1.0f),
+                                          lens.playerTargetOnly, std::max(lens.intervalGameMinutes, 1.0f),
                                           std::max(lens.cooldownGameMinutes, 0.0f) });
             }
             return out;
@@ -1372,8 +1372,8 @@ namespace AgencyEngine::Director
                 [gameDays, dispatchedAt, player = std::move(player), roster = std::move(roster),
                  generateThought = settings.generateThought, lensKey = lens.key, lensName = lens.name,
                  proposal = lens.proposal, lensLedgerSlots = lens.ledgerSlots,
-                 interval = lens.intervalGameMinutes, cooldown = lens.cooldownGameMinutes,
-                 ledgerVeto = settings.ledgerVeto && settings.ledgerEnabled,
+                 playerTargetOnly = lens.playerTargetOnly, interval = lens.intervalGameMinutes,
+                 cooldown = lens.cooldownGameMinutes, ledgerVeto = settings.ledgerVeto && settings.ledgerEnabled,
                  verbose = settings.debugLog](std::string response, bool success) {
                     const auto elapsedMs = NowMs() - dispatchedAt;
 
@@ -1451,12 +1451,17 @@ namespace AgencyEngine::Director
                         speaker = &roster.front();
                     }
 
-                    // Target defaults to the player. A companion turning to
-                    // another companion is the whole point of seeing the party
-                    // as a party, so it only resolves that way when the model
-                    // actually named someone else who is here.
+                    // Target defaults to the player. Most lenses may turn to
+                    // another present companion when the model names one. A
+                    // player-only lens keeps its declared target semantics even
+                    // when the model returns a contract-violating name.
                     const Participant* target = &player;
-                    if (!decision.target.empty() && !IEquals(decision.target, player.name)) {
+                    if (playerTargetOnly) {
+                        if (!decision.target.empty() && !IEquals(decision.target, player.name)) {
+                            logger::warn("The {} lens named '{}' as its target, but this lens always addresses {}",
+                                         lensName.empty() ? "unnamed" : lensName, decision.target, player.name);
+                        }
+                    } else if (!decision.target.empty() && !IEquals(decision.target, player.name)) {
                         if (const auto* named = FindParticipant(roster, decision.target);
                             named && named != speaker) {
                             target = named;

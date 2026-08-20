@@ -18,6 +18,14 @@ namespace AgencyEngine
         }
 
         using LensTable = std::array<Lens, kMaxLenses>;
+        // The builtin rows that could actually appear in the retired array
+        // format. Absence meant a user deletion only for these rows; a lens
+        // shipped after that format retired must arrive at its enabled default.
+        inline constexpr std::array<std::string_view, 3> kLegacyBuiltinLensIds{
+            "aspiration",
+            "relationship",
+            "activity",
+        };
 
         Lens* FindById(LensTable& table, std::string_view id)
         {
@@ -43,10 +51,10 @@ namespace AgencyEngine
             return nullptr;
         }
 
-        // Only the fields that are a preference. A lens's name, prompt file and
-        // proposal semantics come from the build every time — they describe a
-        // file in the archive, and a config that could contradict them would
-        // only ever be wrong about it.
+        // Only the fields that are preferences. A lens's name, prompt file,
+        // proposal semantics and target semantics come from the build every
+        // time — they describe a file in the archive, and a config that could
+        // contradict them would only ever be wrong about it.
         //
         // `weight` is read here rather than ignored with the other retired keys,
         // because one value of it carried an instruction. Weight 0 was how an
@@ -161,13 +169,16 @@ namespace AgencyEngine
                 custom.push_back(prompt);
             }
 
-            // A shipped lens the old file didn't list is one the user deleted,
+            // A legacy builtin the old file didn't list is one the user deleted,
             // and deleting was how the old page said "never ask this". The
-            // enable switch is how the new one says it, so that is what the
-            // intent becomes — rather than the lens reappearing switched on,
-            // which is the one outcome nobody who deleted a row is expecting.
+            // enable switch is how the new one says it. A newer builtin cannot
+            // have appeared in this format, so its absence carries no intent and
+            // it arrives at the shipped default.
             for (auto& lens : table) {
-                if (lens.id[0] != '\0' && std::ranges::find(matched, lens.id) == matched.end()) {
+                const auto id = std::string_view{ lens.id };
+                const bool existedInLegacyRoster =
+                    std::ranges::find(kLegacyBuiltinLensIds, id) != kLegacyBuiltinLensIds.end();
+                if (existedInLegacyRoster && std::ranges::find(matched, id) == matched.end()) {
                     lens.enabled = false;
                     logger::info("Settings: the {} lens was not in the old config, so it stays switched off. Tick "
                                  "it on the Lenses tab if you want it.",
@@ -278,11 +289,12 @@ namespace AgencyEngine
             }
             // Every per-lens field, not just the cadence: a log someone sends in
             // has to describe the configuration it was produced under, and
-            // "proposals, three slots" is the difference between a lens that
-            // recurs and one that vetoes itself into silence.
-            out += std::format("{}({}) every {:.0f}+{:.0f} in-game min{}{}", lens.name, lens.prompt,
+            // "proposals, player-only, three slots" is the difference between a
+            // lens that recurs, one that targets the wrong actor, and one that
+            // vetoes itself into silence.
+            out += std::format("{}({}) every {:.0f}+{:.0f} in-game min{}{}{}", lens.name, lens.prompt,
                                lens.intervalGameMinutes, lens.cooldownGameMinutes,
-                               lens.proposal ? " proposals" : "",
+                               lens.proposal ? " proposals" : "", lens.playerTargetOnly ? " player-only" : "",
                                lens.ledgerSlots > 0 ? std::format(" slots={}", lens.ledgerSlots) : "");
         }
         // Worth spelling out rather than logging an empty list: every lens
