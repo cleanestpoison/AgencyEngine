@@ -268,9 +268,9 @@ if ($NotesFile) {
 
 ## Install
 
-Install ``AgencyEngine-v$Version.zip`` with MO2 or Vortex — the archive root is ``SKSE/``, so it installs directly with no FOMOD.
+Install ``AgencyEngine-v$Version.zip`` with MO2 or Vortex. Its root contains ``AgencyEngine.esp``, ``Scripts/``, and ``SKSE/``, so it installs directly with no FOMOD.
 
-**Requires** SKSE64, Address Library, and [SkyrimNet](https://www.nexusmods.com/skyrimspecialedition/mods/153017). SKSE Menu Framework is optional but strongly recommended — without it the plugin runs headless on defaults.
+**Requires** SKSE64, Address Library, and [SkyrimNet](https://www.nexusmods.com/skyrimspecialedition/mods/153017). SKSE Menu Framework and SkyUI/SkyUI VR are optional parallel interfaces; install either or both. The Skyrim VR MCM host also requires [Skyrim VR ESL](https://github.com/Nightfallstorm/SkyrimVRESL).
 "@
 }
 
