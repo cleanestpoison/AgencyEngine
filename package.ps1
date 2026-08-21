@@ -5,8 +5,8 @@
 #
 # Runs build.ps1 first so _deploy/AgencyEngine/ reflects current source (the
 # compiled DLL plus everything under statics/). Then packages the folder's
-# *contents* — not the folder itself — so the archive's top-level entry is
-# SKSE/, which is what a direct install expects at the mod root.
+# *contents* — not the folder itself — so the archive has AgencyEngine.esp,
+# Scripts/ and SKSE/ at its root, which is what a direct install expects.
 #
 # Usage:
 #   pwsh -File package.ps1                        # version read from CMakeLists.txt
@@ -91,6 +91,25 @@ if (-not (Test-Path -LiteralPath $modFolder -PathType Container)) {
 $dll = Join-Path $modFolder 'SKSE\Plugins\AgencyEngine.dll'
 if (-not (Test-Path -LiteralPath $dll)) {
     throw "No AgencyEngine.dll in $modFolder — the build didn't deploy."
+}
+
+# The SkyUI MCM is hosted by a start-game-enabled quest. The DLL can still run
+# without SkyUI, but omitting the plugin or either script makes the parallel MCM
+# disappear without affecting the native build.
+$mcmPlugin = Join-Path $modFolder 'AgencyEngine.esp'
+if (-not (Test-Path -LiteralPath $mcmPlugin)) {
+    throw "No AgencyEngine.esp in $modFolder — the MCM host plugin wasn't deployed."
+}
+$mcmHeader = [IO.File]::ReadAllBytes($mcmPlugin)
+$mcmFlags = [BitConverter]::ToUInt32($mcmHeader, 8)
+if (($mcmFlags -band 0x00000200) -eq 0) {
+    throw "AgencyEngine.esp is not ESL-flagged — regenerate it with tools/build_mcm_plugin.py."
+}
+foreach ($scriptName in @('AgencyEngine_Bridge', 'AgencyEngine_MCM', 'AgencyEngine_MCMNative')) {
+    $script = Join-Path $modFolder "Scripts\$scriptName.pex"
+    if (-not (Test-Path -LiteralPath $script)) {
+        throw "No $scriptName.pex in $modFolder — the Papyrus statics deploy didn't run."
+    }
 }
 # Every prompt the shipped defaults dispatch, not just the spine: a lens whose
 # file is missing renders as nothing and costs the whole impulse, which shows up

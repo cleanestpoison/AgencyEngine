@@ -1,5 +1,6 @@
 #include "Director.h"
 #include "Logging.h"
+#include "MCM.h"
 #include "PapyrusBridge.h"
 #include "PendingImpulse.h"
 #include "Settings.h"
@@ -229,6 +230,12 @@ namespace AgencyEngine
         logger::info("SKSE runtime version {}, plugin handle {}", skse->RuntimeVersion().string(),
                      static_cast<std::uint32_t>(skse->GetPluginHandle()));
         logger::info("Log level is trace; per-pass verbose lines are gated on the 'Verbose pass logging' setting");
+
+        auto* papyrus = SKSE::GetPapyrusInterface();
+        if (!papyrus || !papyrus->Register(MCM::Register)) {
+            logger::error("Failed to register the MCM Papyrus settings functions");
+            return false;
+        }
 
         auto* messaging = SKSE::GetMessagingInterface();
         if (!messaging || !messaging->RegisterListener(OnMessage)) {

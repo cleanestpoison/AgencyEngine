@@ -55,18 +55,24 @@ Curiosity always targets the player. The other lenses may target another compani
 unsaid affection between companions is the one thing SkyrimNet's per-NPC loops structurally can't produce, because
 nothing else sees the party as a party.
 
-Everything is visible and tunable in-game through the **SKSE Menu Framework** control panel, under a
-**Agency Engine** section with three pages:
+Everything is visible and tunable in-game through two parallel interfaces:
 
-- **Status** — SkyrimNet connection, current followers, each lens's countdown to its next ask, and a
-  *Generate an impulse now* button.
-- **Settings** — gating, cues, how much context to feed the model, and the Lenses tab: a switch, an interval, a
-  cooldown and a slot count per lens, with its countdown, its carried/quiet count and an *Ask now* button beside
-  them. *Ask now* asks that one lens immediately, whatever its clock says — the button for tuning a single prompt.
-  It spends the clock like any other ask.
-- **History** — the last 25 impulses with the lens each was asked under, plus the exact context JSON of the most recent dispatch.
+- **SKSE Menu Framework**, under **Agency Engine**, provides Status, Settings, Carried and History pages. Its
+  Settings page includes the live lens countdowns and carried/quiet counts alongside the controls.
+- **SkyUI MCM**, under **Agency Engine**, provides the same live status, configuration, carried impulses, ledger,
+  history, diagnostic context, and actions in a controller-friendly layout. Long entries open in a detail dialog,
+  and large carried/ledger lists are paged. It is the supported interface for Skyrim VR.
 
-Settings persist to `Data/SKSE/Plugins/AgencyEngine.json` (press *Save settings*; they load on game start).
+Both interfaces share one live `Settings` object and the same Director, carried-impulse, ledger, and history state.
+Changes apply immediately. MCM writes each configuration change to
+`Data/SKSE/Plugins/AgencyEngine.json` automatically; SKSE Menu Framework users persist a group of edits with
+**Save settings**.
+
+The MCM requires `AgencyEngine.esp` to be enabled. It keeps the `.esp` extension for ordinary load-order placement
+but carries the TES4 ESL flag, so it consumes a light slot rather than a full plugin slot. Its only record is the
+MCM quest at local FormID `0x800`, inside the legacy light-plugin range. Skyrim SE/AE loads that natively; Skyrim VR
+requires [Skyrim VR ESL](https://github.com/Nightfallstorm/SkyrimVRESL). The plugin has no SkyUI master, and neither
+missing SkyUI nor a disabled MCM host prevents the DLL or SKSE Menu Framework UI from running.
 
 **No config file ships with the mod, on purpose.** The file holds only the settings you have actually changed;
 everything absent from it is whatever this version of the mod ships, and so follows the mod when a later version
@@ -77,9 +83,14 @@ a supported way to configure anything (it has comments in it, and JSON has no co
 
 ## Requirements
 
-- SKSE64, Address Library
+- SKSE64 or SKSE VR, plus the matching Address Library/CommonLib runtime support
 - **SkyrimNet** (built against beta23-rc2's `CppAPI/PublicAPI.h`; API v9)
-- **SKSE Menu Framework** — optional but strongly recommended; without it the plugin runs headless on defaults.
+- Optional configuration interfaces (install either or both):
+  - **SKSE Menu Framework** — optional; provides the full status and diagnostic interface where supported
+  - **SkyUI / SkyUI VR** — optional; provides the Mod Configuration Menu, including the VR configuration path
+  - On Skyrim VR, **Skyrim VR ESL** is required for the ESL-flagged MCM host
+
+Without either UI dependency, AgencyEngine still runs from its shipped defaults and `AgencyEngine.json`.
 
 ## How it hangs together
 
@@ -89,10 +100,13 @@ a supported way to configure anything (it has comments in it, and JSON has no co
 | `src/Director.cpp` | the impulse loop — timing, gating, context assembly, dispatch |
 | `src/SkyrimNetAPI.cpp` | the only TU that includes SkyrimNet's `PublicAPI.h` |
 | `src/PapyrusBridge.cpp` | writes events back via `SkyrimNetApi` Papyrus natives |
-| `src/UI.cpp` | SKSE Menu Framework pages |
-| `src/Settings.cpp` | JSON-backed config |
+| `src/MCM.cpp` | validated Papyrus-native settings seam plus stable status/carried/ledger/history snapshots and actions |
+| `src/UI.cpp` | SKSE Menu Framework presentation |
+| `src/Settings.cpp` | shared JSON-backed config |
 | `src/State.cpp` | the one mutex everything shared lives behind |
-| `statics/` | mirrors the mod folder; the `.prompt` file deploys from here |
+| `Source/Scripts/AgencyEngine_MCM.psc` | SkyUI MCM presentation and option handling |
+| `tools/build_mcm_plugin.py` | reproducibly builds the minimal quest plugin that hosts the MCM |
+| `statics/` | mirrors the mod folder and contains compiled scripts plus generated plugin assets |
 | `tests/` | the offline ledger tests, off unless `AGENCYENGINE_BUILD_TESTS=ON` |
 
 ### Threading
@@ -179,20 +193,29 @@ and the log lines that name every eviction, suppression and declining path.
 ### Papyrus
 
 `Source/Scripts/*.psc` are **not** built by CMake — the compiler path is machine-specific and it needs the base-game
-script headers, so wiring it in would break a plain C++ build on a fresh clone. Compile by hand and commit the
-resulting `.pex` under `statics/Scripts/`, from where the statics deploy ships it like any other file:
+and SkyUI script headers, so wiring it in would break a plain C++ build on a fresh clone. Compile by hand and commit
+the resulting `.pex` files under `statics/Scripts/`, from where the statics deploy ships them:
 
 ```powershell
-& "<Skyrim>/Papyrus Compiler/PapyrusCompiler.exe" `
-  "Source/Scripts/AgencyEngine_Bridge.psc" `
-  -i="Source/Scripts;<Skyrim>/Data/Source/Scripts" `
-  -o="statics/Scripts" `
-  -f="TESV_Papyrus_Flags.flg" -optimize
+Get-ChildItem "Source/Scripts/*.psc" | ForEach-Object {
+  & "<Skyrim>/Papyrus Compiler/PapyrusCompiler.exe" `
+    $_.FullName `
+    -i="Source/Scripts;<Skyrim>/Data/Source/Scripts" `
+    -o="statics/Scripts" `
+    -f="TESV_Papyrus_Flags.flg" -optimize
+}
 ```
 
-The script's own folder must be on `-i` as well as the base-game sources; without it the compiler fails with
-"unable to locate script" for the very file it was handed. Configure warns when a `.psc` is newer than its `.pex`,
-because the failure mode otherwise is a runtime "function not registered" rather than a build error.
+The script include folder must contain SkyUI's `SKI_ConfigBase.psc`; SkyUI VR ships the same MCM interface. The
+script's own folder must also be on `-i`, or the compiler cannot resolve `AgencyEngine_MCMNative`. Configure warns
+when a `.psc` is newer than its `.pex`, because that otherwise fails only at runtime.
+
+The MCM quest plugin is reproducibly generated and checked with:
+
+```powershell
+python tools/build_mcm_plugin.py
+python tools/build_mcm_plugin.py --check
+```
 
 `external/SKSEMenuFramework.h` is vendored from
 [QTR-Modding/SKSE-Menu-Framework-3](https://github.com/QTR-Modding/SKSE-Menu-Framework-3); it ships no library and
@@ -206,9 +229,10 @@ pwsh -File package.ps1 -Version 0.2.0
 pwsh -File package.ps1 -SkipBuild      # package what's already deployed
 ```
 
-The script builds first (a stale mod folder would ship a broken archive), refuses to package if the DLL or the
-prompt file is missing from the deploy, and zips the *contents* of `_deploy/AgencyEngine/` so the archive root is
-`SKSE/` — the shape MO2 and Vortex install directly, with no FOMOD needed for a single-folder mod.
+The script builds first (a stale mod folder would ship a broken archive), refuses to package if the DLL, MCM host,
+Papyrus scripts or prompt files are missing from the deploy, and zips the *contents* of `_deploy/AgencyEngine/`.
+The archive therefore has `AgencyEngine.esp`, `Scripts/` and `SKSE/` directly at its root, which MO2 and Vortex
+install without a FOMOD.
 
 The version defaults to the `project(AgencyEngine VERSION ...)` line in `CMakeLists.txt`, so the archive name can't
 drift from what the DLL reports to SKSE.
@@ -239,6 +263,7 @@ nothing half-done to clean up by hand.
 ## What gets installed
 
 ```
+AgencyEngine.esp                                                     (ESL-flagged; hosts the optional SkyUI MCM quest)
 SKSE/Plugins/AgencyEngine.dll
 SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_base.prompt         (the shared spine)
 SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_aspiration.prompt
@@ -248,6 +273,8 @@ SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_curiosity.prompt
 SKSE/Plugins/SkyrimNet/config/plugins/AgencyEngine/manifest.yaml
 SKSE/Plugins/AgencyEngine.json.example                                 (documentation; never read)
 Scripts/AgencyEngine_Bridge.pex
+Scripts/AgencyEngine_MCM.pex
+Scripts/AgencyEngine_MCMNative.pex
 ```
 
 There is no `AgencyEngine.json` in that list, and that is the point — see *Settings* above.

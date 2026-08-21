@@ -1,11 +1,12 @@
 #pragma once
 
-// User-facing configuration, edited live in the SKSE Menu Framework page and
-// persisted next to the DLL as Data/SKSE/Plugins/AgencyEngine.json.
+// User-facing configuration, edited live through either the SKSE Menu
+// Framework page or the SkyUI MCM and persisted next to the DLL as
+// Data/SKSE/Plugins/AgencyEngine.json.
 //
 // Char buffers rather than std::string for the text fields: ImGui::InputText
 // writes into a caller-owned buffer, and keeping the storage inline in the
-// struct means the UI can bind directly to the live settings object.
+// struct lets the SKSE Menu Framework adapter bind directly to live settings.
 
 namespace AgencyEngine
 {

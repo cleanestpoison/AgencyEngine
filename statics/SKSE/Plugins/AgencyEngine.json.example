@@ -7,9 +7,9 @@
 // happened to be on the day you installed, and every update after that would be
 // fighting it.
 //
-// The real file is written for you the first time you press Save on the
-// settings page (SKSE Menu Framework -> AgencyEngine), and it holds ONLY the
-// settings you changed. Anything absent from it stays live and follows the mod.
+// The real file is written for you on the first SkyUI MCM change, or when you
+// press Save settings in SKSE Menu Framework. It holds ONLY the settings you
+// changed. Anything absent from it stays live and follows the mod.
 // That is why yours will be much shorter than this — this lists every key that
 // exists, with the shipped value, so you can see what there is.
 //

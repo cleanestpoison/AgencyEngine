@@ -599,13 +599,14 @@ namespace AgencyEngine::UI
 
                 for (int i = 0; i < kMaxLenses; ++i) {
                     auto& lens = s.lenses[i];
-                    // A row the mod ships. Its name and prompt file describe a
-                    // file in the archive, so they are shown rather than edited —
-                    // the old page let both be typed over, and the only thing
-                    // that could do was point a lens at a prompt that doesn't
-                    // resolve, which costs the whole impulse and looks like a
-                    // lens that is simply always quiet.
+                    // Custom lens slots remain part of the JSON compatibility
+                    // contract, but they are not useful in either in-game
+                    // configuration frontend. Render only the shipped roster;
+                    // this also avoids rows of empty controls.
                     const bool shipped = BuiltinLensFor(lens.id) != nullptr;
+                    if (!shipped) {
+                        continue;
+                    }
 
                     // Unique ImGui IDs per row: without the PushID every row's
                     // widgets share a label, and typing in one writes to
@@ -622,20 +623,10 @@ namespace AgencyEngine::UI
                     ImGui::EndDisabled();
 
                     ImGui::TableNextColumn();
-                    if (shipped) {
-                        ImGui::TextDisabled("%s", lens.name);
-                    } else {
-                        ImGui::SetNextItemWidth(-1.0f);
-                        dirty |= ImGui::InputText("##name", lens.name, sizeof(lens.name));
-                    }
+                    ImGui::TextDisabled("%s", lens.name);
 
                     ImGui::TableNextColumn();
-                    if (shipped) {
-                        ImGui::TextDisabled("%s", lens.prompt);
-                    } else {
-                        ImGui::SetNextItemWidth(-1.0f);
-                        dirty |= ImGui::InputText("##prompt", lens.prompt, sizeof(lens.prompt));
-                    }
+                    ImGui::TextDisabled("%s", lens.prompt);
 
                     // In-game minutes, like every other clock in this mod, but
                     // shown in in-game hours *and* in real time underneath:
@@ -683,9 +674,8 @@ namespace AgencyEngine::UI
                     // above it, and a tenth column would cost every other one
                     // width to say one word.
                     //
-                    // Keyed the same way the Director keys its clocks — the id
-                    // for a shipped row, the prompt file for one you wrote —
-                    // because the name is free text and two rows may share one.
+                    // Shipped lenses are keyed by stable id, never editable
+                    // display text.
                     ImGui::BeginDisabled(!lens.enabled || lens.prompt[0] == '\0' || asking);
                     if (ImGui::SmallButton("Ask now")) {
                         Director::RequestFireNow(lens.id[0] != '\0' ? std::string{ lens.id }
@@ -693,18 +683,10 @@ namespace AgencyEngine::UI
                     }
                     ImGui::EndDisabled();
 
-                    // Declared, never inferred from the name above — which is a
-                    // label the user is free to edit, and a rename that
-                    // silently changed how an impulse resolves would fail as
-                    // wrong behaviour rather than as an error. For a shipped
-                    // lens it is declared by the prompt file's own text, so it
-                    // is read-only here for the same reason the prompt is.
+                    // Proposal behaviour is declared by the shipped prompt and
+                    // remains read-only.
                     ImGui::TableNextColumn();
-                    if (shipped) {
-                        ImGui::TextDisabled("%s", lens.proposal ? "yes" : "no");
-                    } else {
-                        dirty |= ImGui::Checkbox("##proposal", &lens.proposal);
-                    }
+                    ImGui::TextDisabled("%s", lens.proposal ? "yes" : "no");
 
                     ImGui::TableNextColumn();
                     ImGui::SetNextItemWidth(-1.0f);

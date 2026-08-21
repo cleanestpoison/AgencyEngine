@@ -69,6 +69,19 @@ foreach(psc IN LISTS PAPYRUS_SOURCES)
     endif()
 endforeach()
 
+# AgencyEngine.esp is a generated ESL-flagged ESP containing only the
+# start-game-enabled quest that hosts AgencyEngine_MCM. Its one local FormID is
+# 0x800, valid for both legacy and expanded light-plugin ranges. Keep the
+# checked-in binary beside the other statics so builds need neither Creation
+# Kit nor Python, but warn when its reproducible generator has moved ahead of it.
+set(MCM_PLUGIN_BUILDER "${CMAKE_SOURCE_DIR}/tools/build_mcm_plugin.py")
+set(MCM_PLUGIN "${CMAKE_SOURCE_DIR}/statics/AgencyEngine.esp")
+if(NOT EXISTS "${MCM_PLUGIN}")
+    message(WARNING "MCM: statics/AgencyEngine.esp is missing. Run python tools/build_mcm_plugin.py.")
+elseif("${MCM_PLUGIN_BUILDER}" IS_NEWER_THAN "${MCM_PLUGIN}")
+    message(WARNING "MCM: statics/AgencyEngine.esp is stale. Run python tools/build_mcm_plugin.py.")
+endif()
+
 # CommonLibSSE's exported target names Microsoft::DirectXTK in its link
 # interface, so directxtk must be found FIRST or the CommonLibSSE config fails
 # at generate time with "target was not found".
