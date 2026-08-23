@@ -342,24 +342,14 @@ namespace AgencyEngine::UI
             ImGui::TextDisabled("= %.1f in-game hours, or about %s at your timescale.",
                                 s.pendingTtlGameMinutes / 60.0f, RealTime(s.pendingTtlGameMinutes, timescale).c_str());
 
-            dirty |= ImGui::SliderFloat("Check whether it is still live every (in-game minutes, 0 = never)",
-                                        &s.pendingResolveGameMinutes, 0.0f, 720.0f, "%.0f");
-            HelpMarker("Asks a cheap LLM call whether the subject has since been had out, and clears it if\n"
-                       "so. Worth having: the usual way an agenda stops being live is that the\n"
-                       "conversation covered it, which the timer above cannot see. Point it at a cheap\n"
-                       "model under SkyrimNet's own settings - the variant is 'agencyengine_resolve'.");
-            if (s.pendingResolveGameMinutes > 0.0f) {
-                // Per open impulse, which is the part that surprises people: a
-                // party carrying six between them checks six times a cycle, not
-                // once. Said here rather than in the tooltip because it is the
-                // number that decides the bill.
-                ImGui::TextDisabled("= about %s, for each impulse anyone is carrying.",
-                                    RealTime(s.pendingResolveGameMinutes, timescale).c_str());
-            }
-            if (s.pendingResolveGameMinutes <= 0.0f) {
-                ImGui::TextColored(kWarn, "%s", "Off - only the timer above will clear a carried impulse, and "
-                                                "a cue never waits on a check.");
-            }
+            dirty |= ImGui::SliderInt("Automatic resolve interval (accepted events, default 30)",
+                                      &s.pendingResolveEventInterval, 1, 200);
+            HelpMarker("Every open impulse receives one semantic check after this many newly accepted SkyrimNet "
+                       "events. Unrelated activity advances the checkpoint instead of postponing it.");
+            dirty |= ImGui::SliderFloat("Automatic resolve cooldown (real seconds, default 240)",
+                                        &s.pendingResolveCooldownSeconds, 60.0f, 900.0f, "%.0f");
+            HelpMarker("Both the event interval and this global real-time cooldown must pass before an automatic "
+                       "paid batch. Manual checks bypass both gates.");
             ImGui::EndDisabled();
 
             ImGui::SeparatorText("Already raised");
@@ -368,6 +358,10 @@ namespace AgencyEngine::UI
                        "stops proposing the same subject. Without it the only record is SkyrimNet's\n"
                        "event tail, which is capped by count - so the evidence that a subject was raised\n"
                        "drains long before the state that produced it does, and it comes back.");
+            dirty |= ImGui::SliderFloat("Recent party echo memory (game days, default 7)",
+                                        &s.partyEchoGameDays, 0.0f, 30.0f, "%.1f");
+            HelpMarker("Recently raised subjects suppress exact echoes across followers for this many game days. "
+                       "Personal companion memory remains separate and durable.");
 
             ImGui::BeginDisabled(!s.ledgerEnabled);
             dirty |= ImGui::SliderInt("Subjects remembered per companion (default 6)", &s.ledgerSlots, 1, 20);
@@ -458,6 +452,17 @@ namespace AgencyEngine::UI
             HelpMarker("An unprompted aside lands badly mid-fight. Every lens clock keeps running; the ask is\n"
                        "declined.");
 
+            ImGui::SeparatorText("SkyrimNet combat events");
+            dirty |= ImGui::Checkbox("Emit a silent combat event stream", &s.combatEventsEnabled);
+            HelpMarker("Registers agencyengine_combat events for started, ongoing, and ended phases. The events\n"
+                       "never narrate or enter scene context; they exist for triggers you author in SkyrimNet.");
+            ImGui::BeginDisabled(!s.combatEventsEnabled);
+            dirty |= ImGui::SliderFloat("Ongoing event interval (real seconds, default 15)",
+                                        &s.combatEventIntervalSeconds, 5.0f, 120.0f, "%.0f");
+            HelpMarker("Emits one ongoing event after each interval of active combat. Menus, loading screens,\n"
+                       "background suspension, and brief out-of-combat gaps do not advance this clock.");
+            ImGui::EndDisabled();
+
             ImGui::SeparatorText("Hand the fight to SkyrimNet instead");
             dirty |= ImGui::Checkbox("Hold continuous mode for the length of a fight", &s.combatContinuousMode);
             HelpMarker("Switches SkyrimNet's continuous scene mode on when combat starts and back off when it\n"
@@ -468,11 +473,13 @@ namespace AgencyEngine::UI
             Note("Requires SkyrimNet's GameMaster agent to be enabled - the toggle does nothing without it, "
                  "and there is no way to ask, so a failed switch-on is reported on the Status page.");
 
-            ImGui::BeginDisabled(!s.combatContinuousMode);
-            dirty |= ImGui::SliderFloat("Grace before switching off (real seconds, default 10)",
+            ImGui::SeparatorText("Shared combat episode");
+            ImGui::BeginDisabled(!s.combatContinuousMode && !s.combatEventsEnabled);
+            dirty |= ImGui::SliderFloat("Exit grace (real seconds, default 10)",
                                         &s.continuousExitGraceSeconds, 0.0f, 60.0f, "%.0f");
-            HelpMarker("Combat drops briefly between waves. Waiting this long before switching off stops the\n"
-                       "mode - and SkyrimNet's on-screen notification - flickering.");
+            HelpMarker("Skyrim drops IsInCombat briefly between waves. AgencyEngine waits this long before both\n"
+                       "the ended event and continuous-mode release, preventing false encounter boundaries and\n"
+                       "SkyrimNet mode notifications from flickering.");
             ImGui::EndDisabled();
         }
 
@@ -1014,10 +1021,46 @@ namespace AgencyEngine::UI
         void __stdcall RenderPending()
         {
             std::vector<PendingImpulses::Entry> pending;
-            GameSnapshot                        snapshot;
+            std::vector<PendingImpulses::FloorGrant> floorOwners;
+            GameSnapshot snapshot;
+            std::size_t personalMemory = 0;
+            std::size_t partyMemory = 0;
+            std::size_t queuedEvidence = 0;
+            std::size_t eligibleEntries = 0;
+            bool batchInFlight = false;
+            std::string lastTrigger;
+            std::uint64_t callsAttempted = 0;
+            std::uint64_t entriesClassified = 0;
+            std::uint64_t zeroCallRaises = 0;
+            std::uint64_t staleResults = 0;
+            std::uint64_t queueOverflow = 0;
+            std::uint64_t evidenceWatermark = 0;
+            bool pollBaseline = false;
+            double pollMilliseconds = 0.0;
+            std::size_t pollTailEvents = 0;
+            std::size_t pollRecoveredEvents = 0;
+            std::uint64_t pollFailures = 0;
             WithState([&](Status& state) {
                 pending = state.pendingImpulses;
+                floorOwners = state.floorOwners;
+                personalMemory = state.personalMemoryRecords;
+                partyMemory = state.partyMemoryRecords;
                 snapshot = state.snapshot;
+                queuedEvidence = state.resolutionQueuedEvidence;
+                eligibleEntries = state.resolutionEligibleEntries;
+                batchInFlight = state.resolutionBatchInFlight;
+                lastTrigger = state.resolutionLastTrigger;
+                callsAttempted = state.resolutionCallsAttempted;
+                entriesClassified = state.resolutionEntriesClassified;
+                zeroCallRaises = state.resolutionZeroCallRaises;
+                staleResults = state.resolutionStaleResults;
+                queueOverflow = state.resolutionQueueOverflow;
+                evidenceWatermark = state.resolutionEvidenceWatermark;
+                pollBaseline = state.resolutionPollBaseline;
+                pollMilliseconds = state.resolutionPollLastMilliseconds;
+                pollTailEvents = state.resolutionPollTailEvents;
+                pollRecoveredEvents = state.resolutionPollRecoveredEvents;
+                pollFailures = state.resolutionPollFailures;
             });
             const auto settings = SnapshotSettings();
 
@@ -1027,7 +1070,7 @@ namespace AgencyEngine::UI
             std::size_t carried = 0;
             std::size_t said = 0;
             for (const auto& entry : pending) {
-                (entry.spoken ? said : carried) += 1;
+                (entry.state == PendingImpulses::LifecycleState::RaisedUnmet ? said : carried) += 1;
             }
 
             if (!settings.pendingBioInjection) {
@@ -1039,35 +1082,42 @@ namespace AgencyEngine::UI
                 ImGui::PopTextWrapPos();
             }
 
+            ImGui::SeparatorText("Resolution scheduler");
+            ImGui::Text("%zu evidence | %zu eligible | %s", queuedEvidence, eligibleEntries,
+                        batchInFlight ? "batch in flight" : "idle");
+            ImGui::TextDisabled("%zu personal memory | %zu party memory | last %s", personalMemory,
+                                partyMemory, lastTrigger.empty() ? "none" : lastTrigger.c_str());
+            ImGui::TextDisabled("%llu paid | %llu classified | %llu zero-call | %llu stale | %llu overflow | "
+                                "watermark %llu",
+                                callsAttempted, entriesClassified, zeroCallRaises, staleResults, queueOverflow,
+                                evidenceWatermark);
+            ImGui::TextDisabled("Recovery poll: %s | every 15 active s | last %.0f ms | tail %zu | recovered %zu | "
+                                "failures %llu",
+                                pollBaseline ? "baseline ready" : "baseline pending", pollMilliseconds,
+                                pollTailEvents, pollRecoveredEvents, pollFailures);
             // Deliberately not an early return when pending is empty: the ledger
             // is the record that outlives every entry, so it is exactly when
             // nobody is carrying anything that it is the only thing worth
             // showing.
             if (pending.empty()) {
-                ImGui::Text("%s", "Nothing is open right now - nobody is carrying anything unsaid, and nothing "
-                                  "said is still waiting on an answer.");
-                Note("An entry appears here the moment a lens produces an impulse, and leaves when the 'still "
-                     "live?' check says the subject was met or the timer forgets it.");
+                ImGui::Text("%s", "Nothing is open right now.");
+                Note("Untouched entries withdraw provisional memory at expiry. Raised/unmet entries retire while "
+                     "their confirmed personal and party memory remains.");
                 RenderLedger();
                 return;
             }
 
-            ImGui::Text("%zu carried, %zu raised and unanswered", carried, said);
-            Note("Carried: it is in her bio, and a cue hands her the turn to open it when the party goes quiet. "
-                 "Raised and unanswered is a state from an older version of this mod, kept because entries from "
-                 "it survive an upgrade - this build cannot tell which of the subjects she is carrying she "
-                 "actually raised, so the 'still live?' check is what decides them all.");
+            ImGui::Text("%zu untouched, %zu raised and unmet", carried, said);
+            Note("Untouched entries are subjects not yet observed aloud. Raised/unmet entries have already been "
+                 "introduced and remain outstanding; they are never presented as new again.");
 
             const auto queued = Director::PendingResolveRequests();
-            if (ImGui::Button("Check all now")) {
+            if (ImGui::Button("Run paid check for all")) {
                 for (const auto& entry : pending) {
-                    Director::RequestResolveCheck(entry.formID, entry.lens);
+                    Director::RequestResolveCheck(entry.id);
                 }
             }
-            HelpMarker("Asks the LLM, for each one, whether the subject has since been had out - and clears the\n"
-                       "ones that have. One call per impulse rather than per companion, because each is its own\n"
-                       "question, and they run one at a time rather than all at once. Works even with the\n"
-                       "scheduled check switched off.");
+            HelpMarker("Queues stable entry IDs into the paid manual resolver. Duplicate clicks coalesce.");
             if (queued > 0) {
                 ImGui::SameLine();
                 ImGui::TextColored(kWarn, "%d check(s) queued", static_cast<int>(queued));
@@ -1083,14 +1133,19 @@ namespace AgencyEngine::UI
                                          ? entry.speakerName.c_str()
                                          : std::format("{}  |  {} question", entry.speakerName, entry.lens).c_str());
 
-                ImGui::TextColored(kSpeaker, "%s -> %s", entry.speakerName.c_str(), entry.targetName.c_str());
+                ImGui::TextColored(kSpeaker, "#%llu  %s -> %s", entry.id, entry.speakerName.c_str(),
+                                   entry.target.name.c_str());
                 ImGui::SameLine();
-                // The state, said plainly and in colour, because every other
-                // line on the row means something different depending on it.
-                if (entry.spoken) {
-                    ImGui::TextColored(kWarn, "%s", "[said, unanswered]");
+                if (entry.state == PendingImpulses::LifecycleState::RaisedUnmet) {
+                    ImGui::TextColored(kWarn, "%s", "[raised / unmet]");
                 } else {
-                    ImGui::TextColored(kNote, "%s", "[not said yet]");
+                    ImGui::TextColored(kNote, "%s", "[untouched]");
+                }
+                if (std::ranges::any_of(floorOwners, [&](const PendingImpulses::FloorGrant& floor) {
+                        return floor.entryId == entry.id;
+                    })) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(kSpeaker, "%s", "[owns floor]");
                 }
 
                 // The ledger's key, and the one field whose quality decides
@@ -1114,83 +1169,55 @@ namespace AgencyEngine::UI
                     ImGui::TextColored(kNote, "%s", "restoring from the last session - not in her prompt yet");
                 }
 
-                // Everything that will eventually end this entry, in one place.
-                // The age counts from whichever phase it is in: speaking restarts
-                // the TTL, so counting from creation would show a countdown that
-                // does not match when it actually expires.
-                const double anchor = entry.spoken ? entry.spokenGameDays : entry.createdGameDays;
+                const bool raised = entry.state == PendingImpulses::LifecycleState::RaisedUnmet;
+                const double anchor = raised ? entry.raisedGameDays : entry.createdGameDays;
                 const double ageMinutes = (snapshot.gameDays - anchor) * 24.0 * 60.0;
                 const double ttlLeft = settings.pendingTtlGameMinutes - ageMinutes;
-                // The lens is on the row's header already, so this is only the
-                // clock.
-                // Each clock with the real time it works out to. These are the
-                // rows where the two units bite hardest: an impulse "forgotten
-                // in 400 in-game minutes" is twenty real minutes at vanilla
-                // timescale and over an hour at 6, and which of those it is
-                // decides whether waiting for her to raise it is reasonable.
                 const float scale = snapshot.valid ? snapshot.timescale : 20.0f;
-                ImGui::TextDisabled("%s for %.0f in-game minutes (%s)", entry.spoken ? "unanswered" : "carried",
+                ImGui::TextDisabled("%s for %.0f in-game minutes (%s)", raised ? "raised/unmet" : "untouched",
                                     ageMinutes < 0.0 ? 0.0 : ageMinutes, RealTimeLeft(ageMinutes, scale).c_str());
                 if (settings.pendingTtlGameMinutes > 0.0f) {
-                    ImGui::TextDisabled("forgotten in %.0f in-game minutes (%s)", ttlLeft < 0.0 ? 0.0 : ttlLeft,
+                    ImGui::TextDisabled("retires in %.0f in-game minutes (%s)", ttlLeft < 0.0 ? 0.0 : ttlLeft,
                                         RealTimeLeft(ttlLeft, scale).c_str());
                 }
-                if (settings.pendingResolveGameMinutes > 0.0f) {
-                    const double sinceCheck = (snapshot.gameDays - entry.lastCheckGameDays) * 24.0 * 60.0;
-                    const double nextCheck = settings.pendingResolveGameMinutes - sinceCheck;
-                    ImGui::TextDisabled("next 'still live?' check in %.0f in-game minutes (%s)",
-                                        nextCheck < 0.0 ? 0.0 : nextCheck,
-                                        RealTimeLeft(nextCheck, scale).c_str());
-                } else {
-                    ImGui::TextDisabled("%s", "'still live?' checks are off - only the timer above will clear it");
-                }
+                ImGui::TextDisabled("evidence watermark %llu | final fallback %s",
+                                    entry.lastAttemptedEvidenceSequence,
+                                    entry.fallbackConsumed ? "consumed" : "available");
+                ImGui::TextDisabled("%s", raised
+                                              ? "retirement preserves confirmed personal and party memory"
+                                              : "retirement withdraws this entry's provisional personal memory");
 
-                // Which way each exit sends the subject. This is the part of the
-                // design that is invisible from anywhere else: two entries that
-                // look identical here end up opposite ways depending on which
-                // clock or check reaches them first.
-                if (entry.spoken && !entry.topic.empty()) {
-                    ImGui::TextDisabled("%s", "if the check says it was answered -> stays off the table");
-                    ImGui::TextDisabled("%s", "if it runs out the clock unanswered -> she can raise it again");
-                } else if (!entry.spoken) {
-                    ImGui::TextDisabled("%s",
-                                        "never said aloud, so either way it costs her nothing - "
-                                        "the subject stays available");
+                if (ImGui::Button("Run paid check now")) {
+                    Director::RequestResolveCheck(entry.id);
                 }
-
-                if (ImGui::Button("Check now")) {
-                    Director::RequestResolveCheck(entry.formID, entry.lens);
-                }
-                HelpMarker("One LLM call: has she had this out since it was recorded? Cleared if yes, left alone\n"
-                           "if no or if the answer cannot be read.");
+                HelpMarker("One explicitly paid semantic check for this stable entry ID. Duplicate clicks coalesce.");
                 ImGui::SameLine();
-                if (ImGui::Button("Forget this")) {
-                    // Takes PendingImpulses' own lock, not the Status one, so
-                    // this is safe from the render thread. The Status mirror is
-                    // rebuilt on the Director's next pass; erase it here too so
-                    // the row goes away on this frame rather than in a second.
-                    // This row only — anything else she is carrying came from
-                    // another lens and is nobody's business but its own.
-                    PendingImpulses::Clear(entry.formID, entry.lens, "cleared by hand from the UI");
-                    const auto formID = entry.formID;
-                    const auto lens = entry.lens;
+                if (ImGui::Button("Stop carrying")) {
+                    PendingImpulses::StopCarrying(entry.id, "stopped from the SKSE menu");
+                    const auto id = entry.id;
                     WithState([&](Status& state) {
-                        std::erase_if(state.pendingImpulses, [&](const PendingImpulses::Entry& e) {
-                            return e.formID == formID && e.lens == lens;
-                        });
+                        std::erase_if(state.pendingImpulses,
+                                      [&](const PendingImpulses::Entry& current) { return current.id == id; });
                     });
                 }
-                HelpMarker("Drops it immediately. She stops carrying it and it leaves her bio; nothing else\n"
-                           "about her changes. The next impulse can give her a new one.");
+                HelpMarker("Removes the open row. Confirmed personal and party memory remains.");
+                ImGui::SameLine();
+                if (ImGui::Button("Forget subject memory")) {
+                    PendingImpulses::ForgetSubject(entry.id, "forgotten from the SKSE menu");
+                    const auto id = entry.id;
+                    WithState([&](Status& state) {
+                        std::erase_if(state.pendingImpulses,
+                                      [&](const PendingImpulses::Entry& current) { return current.id == id; });
+                    });
+                }
+                HelpMarker("Removes this row and personal/party records owned by this entry ID only.");
 
                 ImGui::PopID();
             }
 
             ImGui::Separator();
-            if (ImGui::Button("Forget all")) {
-                for (const auto& entry : pending) {
-                    PendingImpulses::Clear(entry.formID, entry.lens, "cleared by hand from the UI (forget all)");
-                }
+            if (ImGui::Button("Forget all pending and memory")) {
+                PendingImpulses::ForgetAll("global forget from the SKSE menu");
                 WithState([](Status& state) { state.pendingImpulses.clear(); });
             }
             ImGui::SameLine();

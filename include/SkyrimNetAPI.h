@@ -8,6 +8,8 @@
 // wrapper degrades to a harmless default when SkyrimNet is missing or older
 // than the API we compiled against.
 
+#include "SkyrimNetEvent.h"
+
 namespace AgencyEngine::SkyrimNetAPI
 {
     // Loads SkyrimNet.dll and resolves the exports we use. Call once on
@@ -16,6 +18,7 @@ namespace AgencyEngine::SkyrimNetAPI
 
     bool IsAvailable();
     int  GetVersion();
+
 
     // JSON array of recent world events. formID 0 = all events; 0x14 = the
     // player's. `filter` is a comma-separated event-type list ("" = all).
@@ -45,6 +48,9 @@ namespace AgencyEngine::SkyrimNetAPI
     // running or nothing has been seen yet. -1 must not be read as "busy" —
     // a fresh save legitimately has no dialogue in it.
     std::int64_t MsSinceLastDialogue();
+
+    void EnqueueRawDialogue(RawDialogueEvent event);
+    std::vector<RawDialogueEvent> DrainRawDialogueEvents();
 
     // Registers an Inja decorator SkyrimNet can call from any prompt as
     // `<name>(some.UUID)`. This is the only channel that reaches ONE NPC's

@@ -258,6 +258,10 @@ namespace AgencyEngine
                 { "degradeToPersistentEvent",
                   "a cue that runs out of time is simply dropped — the impulse reached her bio before the cue "
                   "was set, so it colours what she says either way" },
+                { "pendingResolveGameMinutes",
+                  "resolution uses accepted-event checkpoints with a real-time cost cooldown" },
+                { "pendingResolveEventCap",
+                  "the former forced-flush cap is replaced by pendingResolveEventInterval, a recurring accepted-event checkpoint" },
             };
             for (const auto& [key, what] : kObsolete) {
                 if (j.contains(key)) {
@@ -314,16 +318,16 @@ namespace AgencyEngine
             "skipInCombat={} playerEvents={} perFollowerEvents={} forcedImpulseChance={}% eventFilter='{}' "
             "lenses=[{}] "
             "deferOnConversation={} quiet={:.0f}s settle={:.0f}s maxDefer={:.0f}s injectQuietGap={} poll={:.1f}s "
-            "verboseLog={} combatContinuousMode={} continuousExitGrace={:.0f}s pendingBioInjection={} "
-            "pendingTtl={:.0f} in-game min pendingResolve={:.0f} in-game min "
-            "followerEventFilter='{}' ledger={} slots={} veto={}",
-            enabled, cues, generateThought,
-            requireFollower, skipInCombat, maxEvents, perFollowerEvents, forcedImpulseChance, eventTypeFilter,
-            LensSummary(),
-            deferOnConversation, quietSeconds, conversationSettleSeconds, maxDeferSeconds, injectQuietGap,
-            quietPollSeconds, debugLog,
-            combatContinuousMode, continuousExitGraceSeconds, pendingBioInjection, pendingTtlGameMinutes,
-            pendingResolveGameMinutes, followerEventTypeFilter, ledgerEnabled, ledgerSlots, ledgerVeto);
+            "verboseLog={} combatEvents={} combatEventInterval={:.0f}s combatContinuousMode={} combatExitGrace={:.0f}s "
+            "pendingBioInjection={} pendingTtl={:.0f} in-game min resolveEvery={} events resolveCooldown={:.0f}s "
+            "partyEcho={:.1f} game days followerEventFilter='{}' ledger={} slots={} veto={}",
+            enabled, cues, generateThought, requireFollower, skipInCombat, maxEvents, perFollowerEvents,
+            forcedImpulseChance, eventTypeFilter, LensSummary(), deferOnConversation, quietSeconds,
+            conversationSettleSeconds, maxDeferSeconds, injectQuietGap, quietPollSeconds, debugLog,
+            combatEventsEnabled, combatEventIntervalSeconds, combatContinuousMode, continuousExitGraceSeconds,
+            pendingBioInjection, pendingTtlGameMinutes, pendingResolveEventInterval,
+            pendingResolveCooldownSeconds, partyEchoGameDays, followerEventTypeFilter, ledgerEnabled, ledgerSlots,
+            ledgerVeto);
     }
 
     std::filesystem::path Settings::FilePath()
@@ -361,6 +365,9 @@ namespace AgencyEngine
             // 0-100 roll, so an out-of-range value read from a hand-edited file
             // would silently mean "never" or "always" rather than what it says.
             forcedImpulseChance = std::clamp(j.value("forcedImpulseChance", forcedImpulseChance), 0, 100);
+            combatEventsEnabled = j.value("combatEventsEnabled", combatEventsEnabled);
+            combatEventIntervalSeconds = std::clamp(
+                j.value("combatEventIntervalSeconds", combatEventIntervalSeconds), 5.0f, 120.0f);
             combatContinuousMode = j.value("combatContinuousMode", combatContinuousMode);
             continuousExitGraceSeconds = j.value("continuousExitGraceSeconds", continuousExitGraceSeconds);
             debugLog = j.value("debugLog", debugLog);
@@ -372,7 +379,11 @@ namespace AgencyEngine
             quietPollSeconds = j.value("quietPollSeconds", quietPollSeconds);
             pendingBioInjection = j.value("pendingBioInjection", pendingBioInjection);
             pendingTtlGameMinutes = j.value("pendingTtlGameMinutes", pendingTtlGameMinutes);
-            pendingResolveGameMinutes = j.value("pendingResolveGameMinutes", pendingResolveGameMinutes);
+            pendingResolveEventInterval =
+                std::clamp(j.value("pendingResolveEventInterval", pendingResolveEventInterval), 1, 200);
+            pendingResolveCooldownSeconds =
+                std::clamp(j.value("pendingResolveCooldownSeconds", pendingResolveCooldownSeconds), 60.0f, 900.0f);
+            partyEchoGameDays = std::clamp(j.value("partyEchoGameDays", partyEchoGameDays), 0.0f, 30.0f);
             ledgerEnabled = j.value("ledgerEnabled", ledgerEnabled);
             ledgerSlots = j.value("ledgerSlots", ledgerSlots);
             ledgerVeto = j.value("ledgerVeto", ledgerVeto);
@@ -441,6 +452,8 @@ namespace AgencyEngine
             put("skipInCombat", skipInCombat, shipped.skipInCombat);
             put("perFollowerEvents", perFollowerEvents, shipped.perFollowerEvents);
             put("forcedImpulseChance", forcedImpulseChance, shipped.forcedImpulseChance);
+            put("combatEventsEnabled", combatEventsEnabled, shipped.combatEventsEnabled);
+            put("combatEventIntervalSeconds", combatEventIntervalSeconds, shipped.combatEventIntervalSeconds);
             put("combatContinuousMode", combatContinuousMode, shipped.combatContinuousMode);
             put("continuousExitGraceSeconds", continuousExitGraceSeconds, shipped.continuousExitGraceSeconds);
             put("debugLog", debugLog, shipped.debugLog);
@@ -452,7 +465,10 @@ namespace AgencyEngine
             put("quietPollSeconds", quietPollSeconds, shipped.quietPollSeconds);
             put("pendingBioInjection", pendingBioInjection, shipped.pendingBioInjection);
             put("pendingTtlGameMinutes", pendingTtlGameMinutes, shipped.pendingTtlGameMinutes);
-            put("pendingResolveGameMinutes", pendingResolveGameMinutes, shipped.pendingResolveGameMinutes);
+            put("pendingResolveEventInterval", pendingResolveEventInterval, shipped.pendingResolveEventInterval);
+            put("pendingResolveCooldownSeconds", pendingResolveCooldownSeconds,
+                shipped.pendingResolveCooldownSeconds);
+            put("partyEchoGameDays", partyEchoGameDays, shipped.partyEchoGameDays);
             put("ledgerEnabled", ledgerEnabled, shipped.ledgerEnabled);
             put("ledgerSlots", ledgerSlots, shipped.ledgerSlots);
             put("ledgerVeto", ledgerVeto, shipped.ledgerVeto);

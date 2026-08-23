@@ -178,7 +178,7 @@ namespace AgencyEngine
         // Costs a second LLM call per carried impulse, and buys the loop its only
         // memory: the thought lands in her event history, which this mod's own
         // prompt reads back on the next ask.
-        bool  generateThought = true;
+        bool  generateThought = false;
         // Don't fire when the player is alone — this mod is about followers.
         bool  requireFollower = true;
         bool  skipInCombat = true;
@@ -233,15 +233,14 @@ namespace AgencyEngine
         // 720 = half an in-game day. Past this it is dropped: something she has
         // been meaning to raise for three days is not an agenda, it is a fixture.
         float pendingTtlGameMinutes = 720.0f;
-        // How often to ask the LLM whether a pending impulse has since been
-        // addressed, in in-game minutes. 0 switches the check off entirely, and
-        // the TTL becomes the only way one expires.
-        //
-        // Worth the call because the common way an agenda stops being live is
-        // that the conversation covered it — which the TTL cannot see, and which
-        // otherwise leaves her bio saying she has been meaning to bring up
-        // something she brought up an hour ago.
-        float pendingResolveGameMinutes = 180.0f;
+        // Accepted SkyrimNet events required between semantic-resolution
+        // checkpoints for each open entry.
+        int pendingResolveEventInterval = 30;
+        // Minimum real seconds between automatic paid batches. Manual checks
+        // bypass this gate.
+        float pendingResolveCooldownSeconds = 240.0f;
+        // Recent party-wide exact echo suppression, in game days.
+        float partyEchoGameDays = 7.0f;
 
         // ---- the ledger ---------------------------------------------------
         //
@@ -264,16 +263,21 @@ namespace AgencyEngine
         // spent, so its real value is the log line naming what was suppressed.
         bool  ledgerVeto = true;
 
+        // Emit a silent, structured SkyrimNet event stream for one logical
+        // combat episode: started, ongoing at the cadence below, and ended.
+        // Off by default. The events never narrate or enter scene context; they
+        // exist for SkyrimNet triggers the user authors.
+        bool  combatEventsEnabled = false;
+        float combatEventIntervalSeconds = 15.0f;
         // Switch SkyrimNet's continuous scene mode on for the duration of a
         // fight, and back off afterwards. Off by default: it makes NPCs talk
         // autonomously *during* combat, which costs LLM calls and is a taste
         // decision, not an improvement. Only ever switches off what it switched
         // on — continuous mode the player enabled themselves is left alone.
         bool  combatContinuousMode = false;
-        // How long the player must stay out of combat before it switches back
-        // off. IsInCombat() drops between waves and on a brief aggro loss, so
-        // without this the mode flickers — and every flicker is a HUD
-        // notification from SkyrimNet, not just a log line.
+        // Shared episode boundary for the event stream and continuous mode.
+        // IsInCombat() drops between waves and on a brief aggro loss, so both
+        // consumers wait this long before treating the fight as ended.
         float continuousExitGraceSeconds = 10.0f;
         // ---- conversation-aware cues ---------------------------------------
         //

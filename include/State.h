@@ -206,6 +206,24 @@ namespace AgencyEngine
         // the UI can show them without taking that module's lock on the render
         // thread. Never the source of truth — the decorator reads the real one.
         std::vector<PendingImpulses::Entry> pendingImpulses;
+        std::vector<PendingImpulses::FloorGrant> floorOwners;
+        std::size_t personalMemoryRecords = 0;
+        std::size_t partyMemoryRecords = 0;
+        std::size_t resolutionQueuedEvidence = 0;
+        std::size_t resolutionEligibleEntries = 0;
+        bool resolutionBatchInFlight = false;
+        std::string resolutionLastTrigger;
+        std::uint64_t resolutionCallsAttempted = 0;
+        std::uint64_t resolutionEntriesClassified = 0;
+        std::uint64_t resolutionStaleResults = 0;
+        std::uint64_t resolutionZeroCallRaises = 0;
+        std::uint64_t resolutionQueueOverflow = 0;
+        std::uint64_t resolutionEvidenceWatermark = 0;
+        bool resolutionPollBaseline = false;
+        double resolutionPollLastMilliseconds = 0.0;
+        std::size_t resolutionPollTailEvents = 0;
+        std::size_t resolutionPollRecoveredEvents = 0;
+        std::uint64_t resolutionPollFailures = 0;
 
         GameSnapshot     snapshot;
         std::deque<Impulse> history;      // newest first, capped

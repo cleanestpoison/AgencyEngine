@@ -7,6 +7,7 @@
 
 #include "Logging.h"
 
+
 namespace AgencyEngine::SkyrimNetAPI
 {
     namespace
@@ -20,6 +21,12 @@ namespace AgencyEngine::SkyrimNetAPI
         // there at all.
         std::atomic<std::int64_t> g_lastDialogueMs{ 0 };
         std::vector<std::uint64_t> g_dialogueCallbacks;
+        std::mutex g_rawDialogueLock;
+        std::deque<RawDialogueEvent> g_rawDialogue;
+        constexpr std::size_t kRawDialogueCap = 256;
+
+        std::int64_t SteadyNowMs();
+
 
         std::int64_t SteadyNowMs()
         {
@@ -171,6 +178,27 @@ namespace AgencyEngine::SkyrimNetAPI
         }
     }
 
+    void EnqueueRawDialogue(RawDialogueEvent event)
+    {
+        std::scoped_lock lock{ g_rawDialogueLock };
+        if (g_rawDialogue.size() == kRawDialogueCap) {
+            g_rawDialogue.pop_front();
+        }
+        g_rawDialogue.push_back(std::move(event));
+    }
+
+    std::vector<RawDialogueEvent> DrainRawDialogueEvents()
+    {
+        std::scoped_lock lock{ g_rawDialogueLock };
+        std::vector<RawDialogueEvent> result;
+        result.reserve(g_rawDialogue.size());
+        while (!g_rawDialogue.empty()) {
+            result.push_back(std::move(g_rawDialogue.front()));
+            g_rawDialogue.pop_front();
+        }
+        return result;
+    }
+
     bool StartDialogueClock()
     {
         if (!g_available || !::PublicRegisterEventCallback) {
@@ -190,13 +218,16 @@ namespace AgencyEngine::SkyrimNetAPI
         // impulses are delivered, and letting one reset the clock would mean
         // every impulse made the next one look like an interruption.
         for (const auto* type : { "dialogue", "dialogue_npc", "dialogue_player", "dialogue_player_text",
-                                  "dialogue_player_stt" }) {
+                                  "dialogue_player_stt", "combat", "world", "active_effect", "death",
+                                  "location_change" }) {
             try {
-                // Runs on SkyrimNet's ThreadPool. Stores a timestamp and
-                // nothing else — no game objects, no allocation, no logging.
-                const auto id = ::PublicRegisterEventCallback(type, [](const char*) {
-                    g_lastDialogueMs.store(SteadyNowMs(), std::memory_order_relaxed);
-                });
+                const auto id = ::PublicRegisterEventCallback(
+                    type, [typeName = std::string{ type }](const char* payload) {
+                        if (typeName.starts_with("dialogue")) {
+                            g_lastDialogueMs.store(SteadyNowMs(), std::memory_order_relaxed);
+                        }
+                        EnqueueRawDialogue(ParseEventCallbackPayload(payload ? payload : "", typeName, SteadyNowMs()));
+                    });
                 if (id != 0) {
                     g_dialogueCallbacks.push_back(id);
                 } else {

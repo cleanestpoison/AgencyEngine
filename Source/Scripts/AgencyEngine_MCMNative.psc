@@ -17,6 +17,7 @@ String Function GetPendingLabel(Int index) Global Native
 String Function GetPendingValue(Int index) Global Native
 String Function GetPendingDetails(Int index) Global Native
 Bool Function CheckPending(Int index) Global Native
+Bool Function StopPending(Int index) Global Native
 Bool Function ForgetPending(Int index) Global Native
 Int Function CheckAllPending() Global Native
 Int Function ForgetAllPending() Global Native

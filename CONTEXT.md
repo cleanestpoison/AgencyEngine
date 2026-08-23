@@ -147,25 +147,41 @@ newest first. Never an event — events carry an audience derived from proximity
 private.
 _Avoid_: memory, thought, note
 
-**Carried / Spoken**:
-The two states of a pending impulse. *Carried* means she has not said it. *Spoken* meant the loop gave
-her the turn on that particular subject and she took it — which the loop can no longer observe, because
-a **cue** grants a turn without naming which of the things she is carrying she will raise. Nothing
-enters the spoken state now; entries restored from before the cue can be in it, and the resolution
-check still asks them their own question. The **resolution** check is what decides a carried impulse.
-_Avoid_: pending/delivered, open/closed
+**Untouched / Raised-unmet / Met**:
+The monotonic lifecycle of a pending impulse. *Untouched* means carried but not observed aloud.
+*Raised-unmet* means introduced but unanswered, deferred, or—if a proposal—not yet done. *Met* means
+answered, refused, made moot, or, for a proposal, done; met entries retire. A raised-unmet entry remains
+open but is never presented as new again.
+_Avoid_: carried/spoken, pending/delivered, open/closed
 
-**Resolution**:
-The periodic check asking whether a pending impulse has been *met*. `false` is the recoverable answer
-and the default when unclear; `true` buries the subject.
-_Avoid_: completion, closure, expiry
+**Entry ID**:
+The persisted, save-local identity of one pending impulse. Cues, floor grants, UI actions, evidence
+watermarks, memory ownership, and resolver verdicts name this ID so stale work cannot mutate a
+replacement occupying the same companion/lens slot.
+_Avoid_: row, slot identity, FormID-plus-lens
 
-**Ledger**:
-Per-companion record of subjects already taken up, rendered into the prompt as a closed door. A slot is
-written at **carry** — the loop cannot see which subject she voiced, so carry is the event it owns —
-and stays provisional until **resolution** confirms or withdraws it. Eviction is by count, not by
-clock: a quiet in-game week must not make a settled grievance raisable again.
-_Avoid_: history, cooldown, blacklist
+**Resolution checkpoint**:
+An explicitly paid semantic batch due for each open entry after 30 newer accepted SkyrimNet events.
+Callbacks provide the low-latency path; one bounded recent-tail poll every 15 active real seconds
+recovers missed callbacks through the same source-ID deduplication, after a non-counting load
+baseline. Every independently due entry shares one cross-follower request, globally limited to one
+automatic batch every four real minutes. Activity advances the checkpoint; silence is irrelevant.
+Manual checks bypass both gates. The same evidence cannot pay twice because each entry persists its
+last-attempted sequence.
+_Avoid_: conversation-settle gate, game-time resolver timer, relevant-event cap, private database reader
+
+**Personal memory / Party memory**:
+Personal exact memory suppresses a companion's repeated subject across all lenses while retaining
+per-lens insertion and eviction. Party-heard exact memory suppresses cross-follower echoes for seven
+game days. Both retain their origin entry ID; provisional personal memory withdraws if an untouched
+entry retires, while a raise confirms both layers.
+_Avoid_: global blacklist, cooldown
+
+**Evidence sequence**:
+A persisted per-save monotonic number assigned after a raw SkyrimNet event leaves its callback.
+`ActiveSaveToken { saveId, generation }` additionally binds raw events, batches, and results to one
+loaded session; generation changes on every load, including A→B→A.
+_Avoid_: event timestamp as identity
 
 **Beat**:
 One ledger slot's worth of impulse. "Suppressed for six beats" means six other subjects must come and
@@ -185,13 +201,17 @@ _Avoid_: relationship score, rapport, affinity
 - Each **Lens** is asked on its own **Interval**; a **Carried** impulse costs it a **Cooldown** as well
 - The **Lens roster** comes from the build; the config holds the switch, the cadence and the ring size,
   by **Lens id**
-- An **Impulse** becomes at most one **Pending impulse**, which is **Carried** and may become **Spoken**
+- An **Impulse** becomes at most one **Pending impulse**, identified by an **Entry ID**, and progresses
+  **Untouched** → **Raised-unmet** → **Met**
 - A companion holds at most one **Pending impulse** per **Lens**, and may hold one from each at once
-- **Resolution** decides one **Pending impulse** at a time, and the question it asks depends on Topic vs
-  Proposal
-- A **Carried** impulse takes a provisional **Ledger** slot at once; **Resolution** confirms it, and
-  every other way it can die withdraws it
-- Each **Lens** evicts only within its own **Ledger** ring, so lenses cannot bury each other's subjects
+- A cue's floor grant owns one exact **Entry ID**; its speaker's opening line raises that entry for zero
+  calls, and any later direct speaker/target exchange can make paid **Resolution** eligible without
+  literal topic overlap
+- **Resolution** batches the independently eligible entry plus other open entries for its participating
+  companion against shared ordered evidence; Topic vs Proposal controls what counts as **Met**
+- An **Untouched** impulse owns provisional **Personal memory**; raising confirms personal and
+  **Party memory**, while untouched retirement withdraws only its provisional record
+- Each **Lens** evicts only within its own personal-memory ring, so lenses cannot bury each other's subjects
 - **Standing** supplies the subject for the **Relationship lens** and the licence for the **Activity lens**
 - The player's summary and appearance join the companion context for the **Curiosity lens**; the subject
   remains one genuine unknown rather than an assumption about the player's identity or history

@@ -18,7 +18,7 @@
 {
   "enabled": true,
   "cues": true,
-  "generateThought": true,
+  "generateThought": false,
   "requireFollower": true,
   "skipInCombat": true,
   "forcedImpulseChance": 20,
@@ -30,11 +30,13 @@
 
   "pendingBioInjection": true,
   "pendingTtlGameMinutes": 720.0,
-  "pendingResolveGameMinutes": 180.0,
+  "pendingResolveEventInterval": 30,
+  "pendingResolveCooldownSeconds": 240.0,
 
   "ledgerEnabled": true,
   "ledgerSlots": 6,
   "ledgerVeto": true,
+  "partyEchoGameDays": 7.0,
 
   "deferOnConversation": true,
   "quietSeconds": 25.0,
@@ -43,6 +45,8 @@
   "injectQuietGap": true,
   "quietPollSeconds": 1.0,
 
+  "combatEventsEnabled": false,
+  "combatEventIntervalSeconds": 15.0,
   "combatContinuousMode": false,
   "continuousExitGraceSeconds": 10.0,
   "debugLog": false,

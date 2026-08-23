@@ -317,6 +317,14 @@ Nothing they are carrying that bears on this.
 {% endif %}
 {% endfor %}
 
+{% if party_recent_topics %}
+### Recently heard party topics
+Do not repeat these topics or paraphrases through any companion:
+{% for heard in party_recent_topics %}
+- {{ heard.speaker }} to {{ heard.target }}: {{ heard.topic }}
+{% endfor %}
+{% endif %}
+
 # Recent events around {{ player.name }}
 This is the scene, not the subject — read it in order, for the moment and for what has just tipped over, not for
 something to comment on. Watch where subjects change: the last stretch is live and closed to you; what got buried
@@ -338,7 +346,7 @@ Check your impulse against three doors. One that fails any of them is not the im
 
 1. **Not the current undertaking.** Not the errand underway, the destination being walked toward, or the fight in
    progress — and not what the last few exchanges are about.
-2. **Not already raised.** Not on the speaker's "has already raised" list — in those words or any others.
+2. **Novel.** Not on the speaker's or party's lists, even reworded.
 {% block lens_evidence_check %}
 3. **Citable.** The `why_now` you return names a stamped thought or event that is actually above — not
    remembered, not inferred.

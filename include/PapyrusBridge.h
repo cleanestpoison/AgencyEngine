@@ -22,10 +22,9 @@
 
 namespace AgencyEngine::PapyrusBridge
 {
-    // Our own SkyrimNet event type — one type for everything this mod records,
-    // discriminated by EventRecord::kind rather than split into a type per
-    // feature. A new kind costs a string constant and nothing else; a new
-    // *type* would cost a schema, a registration call and a format template.
+    // Our prose-bearing SkyrimNet event type, discriminated by
+    // EventRecord::kind. Machine signals that need different persistence and
+    // scene-context semantics use their own schema instead.
     //
     // The type exists because RegisterPersistentEvent has no audience. Its
     // events get a short-lived scene-context copy (RegisterEventSchema's
@@ -38,6 +37,10 @@ namespace AgencyEngine::PapyrusBridge
     // only path to a prompt — and that one filters on get_recent_events(n,
     // [npc.UUID]), so only the actors named on the event see it.
     inline constexpr auto kEventType = "agencyengine_event"sv;
+    // Silent, ephemeral trigger source for the shared combat episode tracker.
+    // It is deliberately separate from kEventType: combat pulses carry
+    // structured state rather than prose and must age out of event history.
+    inline constexpr auto kCombatEventType = "agencyengine_combat"sv;
 
     // Values for EventRecord::kind. Add here, not in a new event type.
     inline constexpr auto kKindImpulse = "impulse"sv;
@@ -65,15 +68,15 @@ namespace AgencyEngine::PapyrusBridge
         std::uint64_t    targetUuid = 0;
     };
 
-    // SkyrimNetApi.RegisterEventSchema for kEventType. Schemas live in
-    // SkyrimNet's DLL, not in the save, so this must run on every load — the
-    // same arrangement other SkyrimNet integrations use. Safe to call
-    // repeatedly; re-registration overwrites.
+    // SkyrimNetApi.RegisterEventSchema for kEventType and kCombatEventType.
+    // Schemas live in SkyrimNet's DLL, not in the save, so this must run on
+    // every load — the same arrangement other SkyrimNet integrations use.
+    // Safe to call repeatedly; re-registration overwrites.
     //
-    // Returning true means the call was dispatched, not that SkyrimNet accepted
-    // it (natives answer through an asynchronous stack callback). A dispatch
-    // that never succeeded makes RecordEvent fall back to the old broadcast
-    // path rather than write events against a type that may not exist.
+    // Returning true means both calls were dispatched, not that SkyrimNet
+    // accepted them (natives answer through asynchronous stack callbacks).
+    // RecordEvent retains its persistent fallback; combat signals are dropped
+    // if their silent structured schema was not dispatched.
     bool RegisterEventSchemas();
 
     // SkyrimNetApi.RegisterEventByUUID — writes `record` to the event history
@@ -101,6 +104,16 @@ namespace AgencyEngine::PapyrusBridge
     // registered: a recorded-but-public impulse is a worse outcome than a
     // private one, but it is a much better outcome than a lost one.
     bool RecordEvent(const EventRecord& record);
+
+    // Writes one structured combat lifecycle signal. The schema is ephemeral,
+    // never creates a short-lived scene-context copy, and cannot interrupt;
+    // therefore this call itself produces no narration. `originatorUuid` is
+    // normally the player, allowing SkyrimNet triggers to choose their own
+    // audience and response.
+    bool RecordCombatEvent(std::string_view phase,
+                           int              sequence,
+                           double           elapsedSeconds,
+                           std::uint64_t    originatorUuid);
 
     // SkyrimNetApi.RegisterPersistentEventByUUID — persisted to the event
     // history and injected into *every* nearby NPC's context, with dialogue

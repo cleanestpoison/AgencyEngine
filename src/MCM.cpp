@@ -43,6 +43,7 @@ namespace AgencyEngine::MCM
             { "ledgerEnabled", &Settings::ledgerEnabled },
             { "ledgerVeto", &Settings::ledgerVeto },
             { "combatContinuousMode", &Settings::combatContinuousMode },
+            { "combatEventsEnabled", &Settings::combatEventsEnabled },
             { "deferOnConversation", &Settings::deferOnConversation },
             { "injectQuietGap", &Settings::injectQuietGap },
             { "debugLog", &Settings::debugLog },
@@ -53,16 +54,19 @@ namespace AgencyEngine::MCM
             { "perFollowerEvents", &Settings::perFollowerEvents, 0, 120 },
             { "forcedImpulseChance", &Settings::forcedImpulseChance, 0, 100 },
             { "ledgerSlots", &Settings::ledgerSlots, 1, 20 },
+            { "pendingResolveEventInterval", &Settings::pendingResolveEventInterval, 1, 200 },
         };
 
         inline constexpr FloatField kFloatFields[] = {
             { "pendingTtlGameMinutes", &Settings::pendingTtlGameMinutes, 30.0f, 4320.0f },
-            { "pendingResolveGameMinutes", &Settings::pendingResolveGameMinutes, 0.0f, 720.0f },
+            { "partyEchoGameDays", &Settings::partyEchoGameDays, 0.0f, 30.0f },
             { "continuousExitGraceSeconds", &Settings::continuousExitGraceSeconds, 0.0f, 60.0f },
+            { "combatEventIntervalSeconds", &Settings::combatEventIntervalSeconds, 5.0f, 120.0f },
             { "quietSeconds", &Settings::quietSeconds, 0.0f, 60.0f },
             { "conversationSettleSeconds", &Settings::conversationSettleSeconds, 0.0f, 300.0f },
             { "maxDeferSeconds", &Settings::maxDeferSeconds, 5.0f, 300.0f },
             { "quietPollSeconds", &Settings::quietPollSeconds, 0.25f, 5.0f },
+            { "pendingResolveCooldownSeconds", &Settings::pendingResolveCooldownSeconds, 60.0f, 900.0f },
         };
 
         // Papyrus strings cross the VM boundary as BSFixedString. Skyrim's
@@ -140,11 +144,10 @@ namespace AgencyEngine::MCM
 
         struct PendingViewRow
         {
-            std::uint32_t formID = 0;
-            std::string   lens;
-            std::string   label;
-            std::string   value;
-            std::string   details;
+            PendingImpulses::EntryId id = 0;
+            std::string label;
+            std::string value;
+            std::string details;
         };
 
         struct DetailRow
@@ -358,7 +361,45 @@ namespace AgencyEngine::MCM
         {
             const auto pending = PendingImpulses::Snapshot();
             GameSnapshot snapshot;
-            WithState([&](Status& state) { snapshot = state.snapshot; });
+            std::vector<PendingImpulses::FloorGrant> floorOwners;
+            std::size_t personalMemory = 0;
+            std::size_t partyMemory = 0;
+            std::size_t queuedEvidence = 0;
+            std::size_t eligibleEntries = 0;
+            bool batchInFlight = false;
+            std::string lastTrigger;
+            std::uint64_t callsAttempted = 0;
+            std::uint64_t entriesClassified = 0;
+            std::uint64_t zeroCallRaises = 0;
+            std::uint64_t staleResults = 0;
+            std::uint64_t queueOverflow = 0;
+            std::uint64_t evidenceWatermark = 0;
+            bool pollBaseline = false;
+            double pollMilliseconds = 0.0;
+            std::size_t pollTailEvents = 0;
+            std::size_t pollRecoveredEvents = 0;
+            std::uint64_t pollFailures = 0;
+            WithState([&](Status& state) {
+                snapshot = state.snapshot;
+                floorOwners = state.floorOwners;
+                personalMemory = state.personalMemoryRecords;
+                partyMemory = state.partyMemoryRecords;
+                queuedEvidence = state.resolutionQueuedEvidence;
+                eligibleEntries = state.resolutionEligibleEntries;
+                batchInFlight = state.resolutionBatchInFlight;
+                lastTrigger = state.resolutionLastTrigger;
+                callsAttempted = state.resolutionCallsAttempted;
+                entriesClassified = state.resolutionEntriesClassified;
+                zeroCallRaises = state.resolutionZeroCallRaises;
+                staleResults = state.resolutionStaleResults;
+                queueOverflow = state.resolutionQueueOverflow;
+                evidenceWatermark = state.resolutionEvidenceWatermark;
+                pollBaseline = state.resolutionPollBaseline;
+                pollMilliseconds = state.resolutionPollLastMilliseconds;
+                pollTailEvents = state.resolutionPollTailEvents;
+                pollRecoveredEvents = state.resolutionPollRecoveredEvents;
+                pollFailures = state.resolutionPollFailures;
+            });
             const auto settings = SnapshotSettings();
 
             std::size_t carried = 0;
@@ -366,48 +407,60 @@ namespace AgencyEngine::MCM
             std::vector<PendingViewRow> rows;
             rows.reserve(pending.size());
             for (const auto& entry : pending) {
-                (entry.spoken ? said : carried) += 1;
-                const auto anchor = entry.spoken ? entry.spokenGameDays : entry.createdGameDays;
+                const bool raised = entry.state == PendingImpulses::LifecycleState::RaisedUnmet;
+                (raised ? said : carried) += 1;
+                const auto anchor = raised ? entry.raisedGameDays : entry.createdGameDays;
                 const auto ageMinutes = (snapshot.gameDays - anchor) * 24.0 * 60.0;
                 const auto ttlLeft = settings.pendingTtlGameMinutes - ageMinutes;
-                const auto sinceCheck = (snapshot.gameDays - entry.lastCheckGameDays) * 24.0 * 60.0;
-                const auto nextCheck = settings.pendingResolveGameMinutes - sinceCheck;
                 const auto scale = snapshot.valid ? snapshot.timescale : 20.0f;
 
-                std::string details = std::format("{} -> {}\nState: {}\n", entry.speakerName, entry.targetName,
-                                                  entry.spoken ? "raised and unanswered" : "carried, not said yet");
+                std::string details = std::format("Entry #{} | {} -> {}\nState: {}\n", entry.id,
+                                                  entry.speakerName, entry.target.name,
+                                                  PendingImpulses::ToString(entry.state));
                 details += entry.topic.empty() ? "Subject: none recorded\n"
                                                : std::format("Subject: {}\n", entry.topic);
                 details += entry.text;
-                details += std::format("\n\n{} for {:.0f} game min ({})",
-                                       entry.spoken ? "Unanswered" : "Carried", std::max(0.0, ageMinutes),
-                                       RealDuration(ageMinutes, scale));
+                details += std::format("\n\n{} for {:.0f} game min ({})", raised ? "Raised/unmet" : "Untouched",
+                                       std::max(0.0, ageMinutes), RealDuration(ageMinutes, scale));
                 if (settings.pendingTtlGameMinutes > 0.0f) {
-                    details += std::format("\nForgotten in {:.0f} game min ({})", std::max(0.0, ttlLeft),
+                    details += std::format("\nRetires in {:.0f} game min ({})", std::max(0.0, ttlLeft),
                                            RealDuration(ttlLeft, scale));
                 }
-                if (settings.pendingResolveGameMinutes > 0.0f) {
-                    details += std::format("\nNext check in {:.0f} game min ({})", std::max(0.0, nextCheck),
-                                           RealDuration(nextCheck, scale));
-                } else {
-                    details += "\nAutomatic still-live checks are off";
-                }
+                details += std::format("\nEvidence watermark: {}\nFinal fallback: {}",
+                                       entry.lastAttemptedEvidenceSequence,
+                                       entry.fallbackConsumed ? "consumed" : "available");
                 if (entry.unverified) {
                     details += "\nRestoring from the last session - not in her prompt yet";
                 }
+                if (std::ranges::any_of(floorOwners,
+                                        [&](const PendingImpulses::FloorGrant& floor) {
+                                            return floor.entryId == entry.id;
+                                        })) {
+                    details += "\nFloor owner: active";
+                }
 
-                rows.push_back({ entry.formID,
-                                 entry.lens,
-                                 entry.lens.empty() ? entry.speakerName
-                                                    : std::format("{} | {}", entry.speakerName, entry.lens),
-                                 std::format("{} -> {} [{}]", entry.speakerName, entry.targetName,
-                                             entry.spoken ? "raised" : "carried"),
+                rows.push_back({ entry.id,
+                                 entry.lens.empty() ? std::format("{} | #{}", entry.speakerName, entry.id)
+                                                    : std::format("{} | {} | #{}", entry.speakerName, entry.lens,
+                                                                  entry.id),
+                                 std::format("{} -> {} [{}]", entry.speakerName, entry.target.name,
+                                             PendingImpulses::ToString(entry.state)),
                                  std::move(details) });
             }
 
             auto summary = pending.empty()
                                ? "Nothing is open right now."s
                                : std::format("{} carried, {} raised and unanswered", carried, said);
+            summary += std::format(" Memory: {} personal, {} party. Resolver: {} evidence, {} eligible, {}, "
+                                   "last {}, {} paid batch(es), {} classified, {} zero-call raise(s), "
+                                   "{} stale, {} overflow, watermark {}. Recovery poll: {} | every 15 active s | "
+                                   "last {:.0f} ms | tail {} | recovered {} | failures {}.",
+                                   personalMemory, partyMemory, queuedEvidence, eligibleEntries,
+                                   batchInFlight ? "in flight" : "idle",
+                                   lastTrigger.empty() ? "none" : lastTrigger, callsAttempted,
+                                   entriesClassified, zeroCallRaises, staleResults, queueOverflow,
+                                   evidenceWatermark, pollBaseline ? "baseline ready" : "baseline pending",
+                                   pollMilliseconds, pollTailEvents, pollRecoveredEvents, pollFailures);
             if (!settings.pendingBioInjection) {
                 summary += " Holding new impulses in character bios is disabled.";
             }
@@ -416,7 +469,6 @@ namespace AgencyEngine::MCM
             g_pendingSummary = std::move(summary);
             g_pendingRows = std::move(rows);
         }
-
         RE::BSFixedString GetPendingSummary(RE::StaticFunctionTag*)
         {
             std::scoped_lock lock{ g_viewLock };
@@ -453,14 +505,13 @@ namespace AgencyEngine::MCM
                        : RE::BSFixedString{};
         }
 
-        std::optional<std::pair<std::uint32_t, std::string>> PendingIdentity(std::int32_t index)
+        std::optional<PendingImpulses::EntryId> PendingIdentity(std::int32_t index)
         {
             std::scoped_lock lock{ g_viewLock };
             if (!ValidViewIndex(index, g_pendingRows.size())) {
                 return std::nullopt;
             }
-            const auto& row = g_pendingRows[static_cast<std::size_t>(index)];
-            return std::pair{ row.formID, row.lens };
+            return g_pendingRows[static_cast<std::size_t>(index)].id;
         }
 
         bool CheckPending(RE::StaticFunctionTag*, std::int32_t index)
@@ -469,48 +520,42 @@ namespace AgencyEngine::MCM
             if (!identity) {
                 return false;
             }
-            Director::RequestResolveCheck(identity->first, identity->second);
+            Director::RequestResolveCheck(*identity);
             return true;
+        }
+
+        bool StopPending(RE::StaticFunctionTag*, std::int32_t index)
+        {
+            const auto identity = PendingIdentity(index);
+            return identity && PendingImpulses::StopCarrying(*identity, "stopped from SkyUI MCM");
         }
 
         bool ForgetPending(RE::StaticFunctionTag*, std::int32_t index)
         {
             const auto identity = PendingIdentity(index);
-            return identity &&
-                   PendingImpulses::Clear(identity->first, identity->second, "cleared by hand from SkyUI MCM");
+            return identity && PendingImpulses::ForgetSubject(*identity, "forgotten from SkyUI MCM");
         }
 
         std::int32_t CheckAllPending(RE::StaticFunctionTag*)
         {
-            std::vector<std::pair<std::uint32_t, std::string>> identities;
+            std::vector<PendingImpulses::EntryId> identities;
             {
                 std::scoped_lock lock{ g_viewLock };
                 identities.reserve(g_pendingRows.size());
                 for (const auto& row : g_pendingRows) {
-                    identities.emplace_back(row.formID, row.lens);
+                    identities.push_back(row.id);
                 }
             }
-            for (const auto& [formID, lens] : identities) {
-                Director::RequestResolveCheck(formID, lens);
+            for (const auto id : identities) {
+                Director::RequestResolveCheck(id);
             }
             return static_cast<std::int32_t>(identities.size());
         }
 
         std::int32_t ForgetAllPending(RE::StaticFunctionTag*)
         {
-            std::vector<std::pair<std::uint32_t, std::string>> identities;
-            {
-                std::scoped_lock lock{ g_viewLock };
-                identities.reserve(g_pendingRows.size());
-                for (const auto& row : g_pendingRows) {
-                    identities.emplace_back(row.formID, row.lens);
-                }
-            }
-            std::int32_t cleared = 0;
-            for (const auto& [formID, lens] : identities) {
-                cleared += PendingImpulses::Clear(formID, lens, "cleared by hand from SkyUI MCM (forget all)") ? 1 : 0;
-            }
-            return cleared;
+            return static_cast<std::int32_t>(
+                PendingImpulses::ForgetAll("forgotten from SkyUI MCM (forget all)"));
         }
 
         std::int32_t GetPendingQueued(RE::StaticFunctionTag*)
@@ -1003,6 +1048,7 @@ namespace AgencyEngine::MCM
         vm->RegisterFunction("GetPendingValue", kScriptName, GetPendingValue);
         vm->RegisterFunction("GetPendingDetails", kScriptName, GetPendingDetails);
         vm->RegisterFunction("CheckPending", kScriptName, CheckPending);
+        vm->RegisterFunction("StopPending", kScriptName, StopPending);
         vm->RegisterFunction("ForgetPending", kScriptName, ForgetPending);
         vm->RegisterFunction("CheckAllPending", kScriptName, CheckAllPending);
         vm->RegisterFunction("ForgetAllPending", kScriptName, ForgetAllPending);

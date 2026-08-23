@@ -106,6 +106,8 @@ namespace
         CHECK(text.find("quietSeconds") == std::string::npos);
         CHECK(text.find("conversationSettleSeconds") == std::string::npos);
         CHECK(text.find("ledgerSlots") == std::string::npos);
+        CHECK(text.find("combatEventsEnabled") == std::string::npos);
+        CHECK(text.find("combatEventIntervalSeconds") == std::string::npos);
         CHECK(text.find("intervalGameMinutes") == std::string::npos);
         CHECK(text.find("cooldownGameMinutes") == std::string::npos);
         CHECK(text.find("followerEventTypeFilter") == std::string::npos);
@@ -458,6 +460,62 @@ namespace
         CHECK(occupied == kMaxLenses);
     }
 
+    void CombatEventSettingsRoundTripAndClamp()
+    {
+        Begin("combat event opt-in and cadence persist, with hand edits clamped");
+
+        Settings first;
+        first.combatEventsEnabled = true;
+        first.combatEventIntervalSeconds = 30.0f;
+        first.continuousExitGraceSeconds = 12.0f;
+        CHECK(first.Save());
+
+        Settings loaded;
+        CHECK(loaded.Load());
+        CHECK(loaded.combatEventsEnabled);
+        CHECK(loaded.combatEventIntervalSeconds == 30.0f);
+        CHECK(loaded.continuousExitGraceSeconds == 12.0f);
+
+        WriteConfig(R"({ "combatEventsEnabled": true, "combatEventIntervalSeconds": 500.0 })");
+        Settings clamped;
+        CHECK(clamped.Load());
+        CHECK(clamped.combatEventsEnabled);
+        CHECK(clamped.combatEventIntervalSeconds == 120.0f);
+    }
+
+    void CheckpointDefaultsAndLegacyResolverMigration()
+    {
+        Begin("checkpoint defaults are bounded and legacy resolver gates stay retired");
+        const Settings shipped;
+        CHECK(!shipped.generateThought);
+        CHECK(shipped.pendingResolveEventInterval == 30);
+        CHECK(shipped.pendingResolveCooldownSeconds == 240.0f);
+        CHECK(shipped.partyEchoGameDays == 7.0f);
+
+        WriteConfig(R"({
+            "pendingResolveGameMinutes": 15,
+            "pendingResolveEventCap": 999,
+            "pendingResolveEventInterval": 999,
+            "pendingResolveCooldownSeconds": 12,
+            "partyEchoGameDays": -2,
+            "quietSeconds": 12
+        })");
+        Settings migrated;
+        CHECK(migrated.Load());
+        CHECK(migrated.pendingResolveEventInterval == 200);
+        CHECK(migrated.pendingResolveCooldownSeconds == 60.0f);
+        CHECK(migrated.partyEchoGameDays == 0.0f);
+        CHECK(migrated.quietSeconds == 12.0f);
+        CHECK(migrated.Save());
+        const auto saved = ReadConfig();
+        CHECK(saved.find("pendingResolveGameMinutes") == std::string::npos);
+        CHECK(saved.find("pendingResolveEventCap") == std::string::npos);
+        CHECK(saved.find("pendingResolveEventInterval") != std::string::npos);
+        CHECK(saved.find("pendingResolveCooldownSeconds") != std::string::npos);
+        CHECK(saved.find("partyEchoGameDays") != std::string::npos);
+        CHECK(saved.find("quietSeconds") != std::string::npos);
+    }
+
     void AMalformedFileLeavesTheDefaultsAlone()
     {
         Begin("a file that does not parse leaves every setting at its default");
@@ -487,6 +545,8 @@ int main()
     ARenamedRowIsStillTheShippedLens();
     AHandWrittenLensSurvives();
     MoreLensesThanFitAreDropped();
+    CombatEventSettingsRoundTripAndClamp();
+    CheckpointDefaultsAndLegacyResolverMigration();
     AMalformedFileLeavesTheDefaultsAlone();
 
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);

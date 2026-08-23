@@ -1,8 +1,10 @@
 #include "Director.h"
+#include "CombatEpisode.h"
 
 #include "Logging.h"
 #include "PapyrusBridge.h"
 #include "PendingImpulse.h"
+#include "ResolutionScheduler.h"
 #include "Settings.h"
 #include "SkyrimNetAPI.h"
 #include "State.h"
@@ -25,6 +27,8 @@ namespace AgencyEngine::Director
         constexpr auto kResolvePrompt = "agencyengine_impulse_resolved";
         constexpr auto kResolveVariant = "agencyengine_resolve";
         constexpr auto kPassInterval = 1s;
+        constexpr auto kRecentEventPollInterval = 15s;
+        constexpr int kRecentEventTail = 100;
         // A snapshot older than this means the main thread isn't running our
         // tasks (main menu, loading screen, hard stall) — don't act on it.
         constexpr auto kSnapshotMaxAge = 5s;
@@ -67,6 +71,7 @@ namespace AgencyEngine::Director
         // Set on a load/new game. Combat state, and our belief about who owns
         // continuous mode, do not survive one.
         std::atomic_bool g_continuousReset{ false };
+        std::atomic_bool g_combatEpisodeReset{ false };
         std::atomic<std::int64_t> g_lastCaptureMs{ 0 };
         // When the game last came back from a menu or the background. 0 means
         // it has not been suspended yet this session, which is not a wait.
@@ -74,11 +79,27 @@ namespace AgencyEngine::Director
         // When the vanilla topic list last came down. 0 means it has not been
         // seen open this session, which is not a wait either.
         std::atomic<std::int64_t> g_dialogueMenuClosedAtMs{ 0 };
+        SkyrimNetAPI::RecentEventRecovery g_recentEventRecovery;
+        std::int64_t g_recentPollTickMs = 0;
+        std::int64_t g_recentPollActiveMs = 0;
+        bool g_recentPollAttemptedBaseline = false;
+        bool g_recentPollBaseline = false;
+        double g_recentPollLastMilliseconds = 0.0;
+        std::size_t g_recentPollTailEvents = 0;
+        std::size_t g_recentPollRecoveredEvents = 0;
+        std::uint64_t g_recentPollFailures = 0;
 
         std::int64_t NowMs()
         {
             return std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        }
+
+        std::int64_t UnixNowMs()
+        {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::system_clock::now().time_since_epoch())
                 .count();
         }
 
@@ -185,26 +206,13 @@ namespace AgencyEngine::Director
         // only for short reads and this holds strings.
         struct PendingCue
         {
+            PendingImpulses::CueOwnership ownership;
             std::uint32_t formID = 0;
-            std::string   speakerName;
-            std::string   targetName;
+            std::string speakerName;
             std::uint64_t speakerUuid = 0;
-            std::uint64_t targetUuid = 0;
-            // Real time, for maxDeferSeconds. Deliberately *not* refreshed when
-            // a second carry coalesces: the wait is for one lull, and a
-            // companion picking up an impulse every few minutes would otherwise
-            // hold a cue open indefinitely.
-            std::int64_t  setAtMs = 0;
-            // Game time, for the resolve gate — an entry checked since this is
-            // one the gate has already accounted for.
-            double        setGameDays = 0.0;
-            // How many carries have coalesced into this one cue. Log only, and
-            // the number worth watching while tuning the bio's stacking.
-            int           carries = 0;
-            // Whether the gate has already asked for the resolution checks it
-            // wants. They run one at a time on the Director's own queue, so the
-            // cue waits over several passes rather than blocking one.
-            bool          resolveRequested = false;
+            // Real time, for maxDeferSeconds. Coalescing updates ownership but
+            // deliberately never refreshes this defer clock.
+            std::int64_t setAtMs = 0;
         };
         std::mutex              g_cueLock;
         std::vector<PendingCue> g_cues;
@@ -219,13 +227,13 @@ namespace AgencyEngine::Director
         // questions outstanding and the button is drawn per row.
         struct ResolveRequest
         {
-            std::uint32_t formID = 0;
-            std::string   lens;
+            PendingImpulses::EntryId entryId = 0;
 
             bool operator==(const ResolveRequest&) const = default;
         };
         std::mutex                 g_resolveRequestLock;
         std::deque<ResolveRequest> g_resolveRequests;
+        ResolutionScheduling::Scheduler g_resolutionScheduler;
 
         // ---- the vanilla conversation --------------------------------------
         //
@@ -666,26 +674,31 @@ namespace AgencyEngine::Director
         // grant the speaking turn in one act; the two came apart when a pass
         // started being able to produce several carries at once (docs/adr/0004),
         // and this is the half that carries the payload.
-        bool RecordAsPendingImpulse(const ImpulseDelivery& d)
+        PendingImpulses::EntryId RecordAsPendingImpulse(const ImpulseDelivery& d, int ledgerSlots,
+                                                        bool ledgerEnabled)
         {
             if (d.speakerFormID == 0) {
                 logger::warn("Wanted to record {}'s impulse for her bio, but there is no FormID to key it to — the "
                              "impulse is lost",
                              d.speakerName);
-                return false;
+                return 0;
             }
 
             PendingImpulses::Entry entry;
             entry.formID = d.speakerFormID;
+            entry.speakerId = d.speakerUuid;
             entry.speakerName = d.speakerName;
-            entry.targetName = d.targetName;
+            entry.target = { d.targetUuid, d.targetName };
             entry.text = d.content;
             entry.topic = d.topic;
             entry.lens = d.lens;
             entry.proposal = d.proposal;
             entry.createdGameDays = d.gameDays;
-            PendingImpulses::Set(std::move(entry));
-            return true;
+            const auto slots = d.lensLedgerSlots > 0 ? d.lensLedgerSlots : ledgerSlots;
+            return PendingImpulses::Carry(std::move(entry),
+                                          ledgerEnabled && slots > 0
+                                              ? static_cast<std::size_t>(std::max(d.lensLedgerSlots, 0))
+                                              : 0);
         }
 
         // The subject takes a provisional ledger slot the moment it is carried.
@@ -699,55 +712,31 @@ namespace AgencyEngine::Director
         // confirmed if the resolution check judges the subject met, withdrawn
         // otherwise — so nothing here settles a subject. It only stops the next
         // ask proposing the same one straight back.
-        void RecordLedgerSlot(const ImpulseDelivery& d, int ledgerSlots, bool ledgerEnabled)
-        {
-            // The lens's own count decides whether there is a ring to record
-            // into; the global one only stands in for a lens that asks for it.
-            // Gating on the global alone meant a lens configured with three
-            // slots recorded nothing whenever the global was 0.
-            const auto slots = d.lensLedgerSlots > 0 ? d.lensLedgerSlots : ledgerSlots;
-            if (d.speakerFormID == 0 || !ledgerEnabled || slots <= 0 || d.topic.empty()) {
-                return;
-            }
-            // The slot goes in this lens's own ring, sized by that lens's count —
-            // 0 there means the global one. A lens only ever displaces its own
-            // subjects, so a lens that cycles fast cannot quietly release what
-            // another one settled.
-            PendingImpulses::LedgerRecord(d.speakerFormID, d.speakerName, d.topic, d.lens,
-                                          static_cast<std::size_t>(std::max(d.lensLedgerSlots, 0)));
-            logger::info("Ledger: {} is carrying '{}' under the {} lens — held until we know whether anyone met it",
-                         d.speakerName, OneLine(d.topic), d.lens.empty() ? "unnamed" : d.lens);
-        }
+        // Personal provisional memory is created atomically by Carry().
 
         // Sets or coalesces this companion's pending cue. Main thread, called
         // straight after the store write.
-        void SetOrCoalesceCue(const ImpulseDelivery& d)
+        void SetOrCoalesceCue(const ImpulseDelivery& d, PendingImpulses::EntryId entryId)
         {
             {
                 std::scoped_lock lock{ g_cueLock };
                 const auto it = std::ranges::find_if(
                     g_cues, [&](const PendingCue& cue) { return cue.formID == d.speakerFormID; });
                 if (it != g_cues.end()) {
-                    it->carries += 1;
-                    // The newest carry decides who she turns to; the clock does
-                    // not move, so a companion picking something up every few
-                    // minutes cannot hold one cue open all evening.
-                    it->targetName = d.targetName;
-                    it->targetUuid = d.targetUuid;
+                    it->ownership.Coalesce(entryId, { d.targetUuid, d.targetName });
+                    // The newest carry decides ownership before emission; the
+                    // original defer clock remains fixed.
                     logger::info("{} already has a cue waiting — that is {} things on her mind behind one sentence",
-                                 d.speakerName, it->carries);
+                                 d.speakerName, it->ownership.carries);
                     return;
                 }
 
                 PendingCue cue;
+                cue.ownership.Coalesce(entryId, { d.targetUuid, d.targetName });
                 cue.formID = d.speakerFormID;
                 cue.speakerName = d.speakerName;
-                cue.targetName = d.targetName;
                 cue.speakerUuid = d.speakerUuid;
-                cue.targetUuid = d.targetUuid;
                 cue.setAtMs = NowMs();
-                cue.setGameDays = d.gameDays;
-                cue.carries = 1;
                 g_cues.push_back(std::move(cue));
             }
             WithState([](Status& state) { state.deliveryPending = true; });
@@ -766,13 +755,12 @@ namespace AgencyEngine::Director
 
             bool        ok = false;
             std::string how;
+            PendingImpulses::EntryId entryId = 0;
 
             if (settings.pendingBioInjection) {
-                ok = RecordAsPendingImpulse(d);
+                entryId = RecordAsPendingImpulse(d, settings.ledgerSlots, settings.ledgerEnabled);
+                ok = entryId != 0;
                 how = "carried in her bio";
-                if (ok) {
-                    RecordLedgerSlot(d, settings.ledgerSlots, settings.ledgerEnabled);
-                }
                 if (ok && settings.generateThought) {
                     // Two different things about one impulse: the pending entry
                     // is the agenda, in her words-to-be; this is what carrying it
@@ -803,7 +791,7 @@ namespace AgencyEngine::Director
                                  "stays in her bio and surfaces from there",
                                  d.speakerName);
                 } else {
-                    SetOrCoalesceCue(d);
+                    SetOrCoalesceCue(d, entryId);
                     how += " + cue";
                 }
             }
@@ -1058,6 +1046,19 @@ namespace AgencyEngine::Director
                 followers.push_back(std::move(entry));
             }
             context["followers"] = std::move(followers);
+
+            nlohmann::json partyTopics = nlohmann::json::array();
+            if (settings.ledgerEnabled) {
+                for (const auto& record : PendingImpulses::PartyPromptSnapshot()) {
+                    partyTopics.push_back({
+                        { "entry_id", record.originEntryId },
+                        { "speaker", record.speakerName },
+                        { "target", record.target.name.empty() ? "the party" : record.target.name },
+                        { "topic", record.topic },
+                    });
+                }
+            }
+            context["party_recent_topics"] = std::move(partyTopics);
 
             context["recent_events"] =
                 ParseEvents(SkyrimNetAPI::GetRecentEvents(kPlayerFormID, settings.maxEvents, settings.eventTypeFilter));
@@ -1478,30 +1479,28 @@ namespace AgencyEngine::Director
                                      speaker->name);
                     }
 
-                    // The backstop. The prompt is shown what she has already
-                    // raised and told not to repeat it; this catches the times
-                    // it does anyway. The call is already spent by now, so the
-                    // saving is not tokens — it is that she does not say the
-                    // same thing twice, and that the log names which subject was
-                    // held back, which is the only way to tell a prompt that is
-                    // being ignored from one that is working.
-                    // Scoped to this lens's ring, like eviction: another lens
-                    // holding the subject is not this lens's business, and the
-                    // prompt already renders every lens's slots as one "already
-                    // raised" list so a repeat across lenses is headed off
-                    // before the call rather than after it.
-                    if (ledgerVeto && !decision.topic.empty() &&
-                        PendingImpulses::LedgerSuppresses(speaker->formID, decision.topic, lensName)) {
-                        logger::info("Held back: {} has already raised '{}' under the {} lens and the ledger still "
-                                     "holds it. Nothing is carried from this ask.",
-                                     speaker->name, OneLine(decision.topic), lensName.empty() ? "unnamed" : lensName);
+                    // Exact personal suppression spans every lens. Recent
+                    // party-heard suppression also checks the selected target,
+                    // so another follower cannot echo the same subject.
+                    const bool personalRepeat =
+                        ledgerVeto && !decision.topic.empty() &&
+                        PendingImpulses::LedgerSuppresses(speaker->formID, decision.topic);
+                    const bool partyRepeat =
+                        ledgerVeto && !decision.topic.empty() &&
+                        PendingImpulses::PartySuppresses(decision.topic, { target->uuid, target->name });
+                    if (personalRepeat || partyRepeat) {
+                        logger::info("Held back: {}'s '{}' is already present in {} memory. Nothing is carried from "
+                                     "this ask.",
+                                     speaker->name, OneLine(decision.topic),
+                                     partyRepeat ? "recent party-heard" : "personal");
                         Impulse held;
                         held.when = FormatGameTime(gameDays);
-                        held.content = std::format("(held back: {} has already raised '{}')", speaker->name,
-                                                   OneLine(decision.topic));
+                        held.content = std::format("(held back: '{}' is already remembered by {})",
+                                                   OneLine(decision.topic),
+                                                   partyRepeat ? "the party" : speaker->name);
                         held.speaker = speaker->name;
                         held.topic = decision.topic;
-                        held.delivery = "held (already raised)";
+                        held.delivery = partyRepeat ? "held (party heard)" : "held (personally remembered)";
                         held.lens = lensName;
                         held.ok = true;
                         RecordImpulse(std::move(held), false);
@@ -1678,38 +1677,38 @@ namespace AgencyEngine::Director
             }
         }
 
-        // ---- SkyrimNet continuous mode, held for the length of a fight -----
+        // ---- combat episode consumers -------------------------------------
         //
-        // Called on every pass from the Director thread, ahead of and independent
-        // of the impulse gates: whether an impulse is due has nothing to do with
-        // whether the party should be talking through a fight.
-        //
-        // The whole read-modify-write lives in Papyrus (AgencyEngine_Bridge),
-        // so everything here is fire-and-forget; ownership comes back through
-        // the mod-event sink, which is why this reads it out of Status rather
-        // than tracking it locally.
-        void UpdateContinuousMode(const Settings& settings, const GameSnapshot& snap, bool snapshotFresh)
+        // The tracker owns the definition of a fight. Both consumers below see
+        // the same exit grace, brief-combat-drop handling, and suspension clock.
+        // Neither is subject to the impulse gates.
+        void QueueCombatEvent(const CombatEpisodeSignal& signal)
+        {
+            const auto phase = std::string{ CombatEpisodePhaseName(signal.phase) };
+            const auto playerUuid = SkyrimNetAPI::FormIDToUUID(kPlayerFormID);
+            if (auto* tasks = SKSE::GetTaskInterface()) {
+                tasks->AddTask([phase, sequence = signal.sequence, elapsed = signal.elapsedSeconds, playerUuid]() {
+                    PapyrusBridge::RecordCombatEvent(phase, sequence, elapsed, playerUuid);
+                });
+            }
+        }
+
+        // The whole continuous-mode read-modify-write lives in Papyrus
+        // (AgencyEngine_Bridge), so everything here is fire-and-forget;
+        // ownership comes back through the mod-event sink.
+        void UpdateContinuousMode(const Settings& settings, bool inEpisode, bool suspended)
         {
             // Director thread only, like the other helpers in this section.
-            static bool         active = false;      // we consider a fight in progress
-            static std::int64_t leftCombatMs = 0;    // when combat last dropped, 0 = not counting
+            static bool         active = false;      // this consumer is holding this episode
             static int          acquireReports = -1; // acquire count at acquire, -1 = nothing outstanding
             static std::int64_t acquiredMs = 0;
             // Switching the mode off is a simulated hotkey press, and SkyrimNet
-            // drops one that lands while Papyrus is frozen — a menu, a loading
-            // screen, the seconds either side of a fight at a dungeon door. It
-            // comes back reporting the mode still on, so a switch-off has to be
-            // checked and repeated rather than believed. These track the one in
-            // flight; ownership itself lives in Status, where the report writes it.
-            static std::int64_t releaseAskedMs = 0;  // when the last switch-off went out
-            static int          releaseAttempts = 0; // how many this handover has taken
-            // Why we owe the mode back. Set where the reason appears, read by the
-            // handover below — which may not run on the same pass, because it
-            // waits for the game to be running before it asks for anything.
+            // drops one that lands while Papyrus is frozen. Ownership remains
+            // in Status until a report confirms that the toggle took.
+            static std::int64_t releaseAskedMs = 0;
+            static int          releaseAttempts = 0;
             static const char*  releaseWhy = "combat ended";
 
-            // A switch-off crosses the VM twice with a frame's wait in between,
-            // so it needs seconds, not milliseconds, before it counts as lost.
             constexpr std::int64_t kReleaseRetryMs = 5000;
             constexpr int          kReleaseAttempts = 3;
 
@@ -1724,9 +1723,6 @@ namespace AgencyEngine::Director
                 logger::info("Releasing continuous mode: {}", why);
                 releaseAskedMs = NowMs();
                 releaseAttempts += 1;
-                // Ownership is deliberately not cleared here. Only the report
-                // knows whether the toggle took, and assuming it did is what
-                // left the mode switched on with nobody owing it a switch-off.
                 WithState([](Status& state) { state.continuousPending = true; });
                 if (auto* tasks = SKSE::GetTaskInterface()) {
                     tasks->AddTask([]() { PapyrusBridge::SetContinuousMode(false); });
@@ -1734,54 +1730,37 @@ namespace AgencyEngine::Director
             };
 
             if (g_continuousReset.exchange(false)) {
-                // A load lands us anywhere — a save from before this fight, or
-                // another one entirely — so the combat edge we were tracking is
-                // meaningless now. Continuous mode itself is not save data
-                // though: it's SkyrimNet's own runtime setting, still on from
-                // before the load. Hand it back below or nothing ever will.
+                // A load invalidates the edge this consumer was following, but
+                // SkyrimNet's runtime setting survives. Preserve ownership so
+                // the next running pass either adopts the loaded fight or hands
+                // the mode back.
                 if (owned) {
                     releaseWhy = "a save was loaded while we were holding it";
                 }
                 active = false;
-                leftCombatMs = 0;
                 acquireReports = -1;
                 releaseAskedMs = 0;
                 releaseAttempts = 0;
             }
 
             if (!settings.combatContinuousMode && active) {
-                // Turned off mid-fight. Hand back anything we are holding rather
-                // than leaving the player in a mode they just asked to stop using.
                 if (owned) {
                     releaseWhy = "the setting was switched off while we were holding it";
                 }
                 active = false;
-                leftCombatMs = 0;
                 acquireReports = -1;
             }
 
-            // A stale snapshot means the main thread isn't running our tasks, so
-            // playerInCombat is whatever it was before the stall — acting on it
-            // would switch the mode on the strength of an old reading. A paused
-            // or backgrounded game is worse than useless to act on: it is exactly
-            // where a simulated hotkey gets dropped, which is what the retry
-            // below exists to undo. Holding position is the safe answer either
-            // way: if we own the mode we keep owning it.
-            if (IsSuspended(snap, snapshotFresh)) {
+            // Never send a simulated hotkey while the VM is paused or the
+            // snapshot is stale. The shared episode tracker also pauses here.
+            if (suspended) {
                 return;
             }
 
-            // A fight we would hold the mode for. Not the same as being in
-            // combat: with the setting off there is no such fight, which is what
-            // makes the handover below run mid-fight when the player switches it
-            // off — and what stops it firing on the pass a new fight starts on
-            // top of a switch-off that didn't take.
-            const bool inFight = settings.combatContinuousMode && snap.playerInCombat;
+            const bool inFight = settings.combatContinuousMode && inEpisode;
 
-            // Anything we hold outside such a fight is owed back, whatever put
-            // us here — the fight ended, a save was loaded, the setting was
-            // switched off. One place asks for it, and keeps asking until a
-            // report says the mode is actually off.
+            // Anything we hold outside a configured fight is owed back. Keep
+            // asking until a report says the mode is actually off.
             if (owned && !active && !inFight) {
                 const auto waited = NowMs() - releaseAskedMs;
                 if (releaseAttempts == 0) {
@@ -1795,25 +1774,22 @@ namespace AgencyEngine::Director
                                  "now — the next fight to end will try again, or press SkyrimNet's continuous-mode "
                                  "hotkey to clear it by hand.",
                                  kReleaseAttempts);
-                    releaseAttempts += 1;  // said once; the next acquire starts the count over
+                    releaseAttempts += 1;
                 }
                 return;
             }
 
             if (inFight) {
-                leftCombatMs = 0;
                 if (active) {
                     return;
                 }
                 active = true;
                 acquireReports = reports;
                 acquiredMs = NowMs();
-                // A fresh budget for this fight's handover, whether or not the
-                // last one ever finished.
                 releaseAskedMs = 0;
                 releaseAttempts = 0;
                 releaseWhy = "combat ended";
-                logger::info("Combat started — asking for continuous mode");
+                logger::info("Combat episode started — asking for continuous mode");
                 if (auto* tasks = SKSE::GetTaskInterface()) {
                     WithState([](Status& state) { state.continuousPending = true; });
                     tasks->AddTask([]() { PapyrusBridge::SetContinuousMode(true); });
@@ -1825,26 +1801,10 @@ namespace AgencyEngine::Director
                 return;
             }
 
-            // Out of combat. Wait out the grace period before switching back:
-            // IsInCombat() drops between waves, and each flip is a HUD
-            // notification the player has to watch.
-            if (leftCombatMs == 0) {
-                leftCombatMs = NowMs();
-                logger::debug("Combat ended — {:.0f}s grace before continuous mode is released",
-                              settings.continuousExitGraceSeconds);
-                return;
-            }
-            const auto graceMs = static_cast<std::int64_t>(settings.continuousExitGraceSeconds * 1000.0f);
-            if (NowMs() - leftCombatMs < graceMs) {
-                return;
-            }
-
-            // A fight shorter than the Papyrus round trip would otherwise be
-            // released before we knew whether we owned the mode — and "not
-            // owned" reads identically to "the player already had it on", so we
-            // would leave it switched on forever. Wait for the report, but not
-            // indefinitely: if it never arrives the helper isn't running, and
-            // there is nothing to release anyway.
+            // The shared tracker has completed the exit grace. A fight shorter
+            // than the Papyrus round trip still waits for its acquire report,
+            // otherwise \"not owned\" is indistinguishable from \"the player
+            // already had it on\" and the mode can be orphaned.
             if (acquireReports >= 0 && reports == acquireReports) {
                 if (NowMs() - acquiredMs < 5000) {
                     return;
@@ -1854,16 +1814,58 @@ namespace AgencyEngine::Director
             }
 
             active = false;
-            leftCombatMs = 0;
             acquireReports = -1;
 
             if (owned) {
-                // Asked for on the next pass, by the handover above. Whatever
-                // asks has to be whatever repeats the ask, and repeating it is
-                // the whole point — so there is only the one place.
                 releaseWhy = "combat ended";
             } else {
                 logger::debug("Combat ended, but continuous mode isn't ours to switch off — leaving it as it is");
+            }
+        }
+
+        void UpdateCombat(const Settings& settings,
+                          const GameSnapshot& snap,
+                          bool snapshotFresh,
+                          bool skyrimNetAvailable)
+        {
+            static CombatEpisodeTracker tracker;
+            static bool                 eventsWereEnabled = false;
+
+            if (g_combatEpisodeReset.exchange(false)) {
+                tracker.Reset();
+                eventsWereEnabled = false;
+            }
+
+            // Enabling the stream halfway through a fight begins a fresh event
+            // lifecycle immediately, rather than emitting ongoing without a
+            // preceding started signal. Continuous mode already held for the
+            // encounter is unaffected.
+            if (settings.combatEventsEnabled && !eventsWereEnabled) {
+                tracker.Reset();
+            }
+            eventsWereEnabled = settings.combatEventsEnabled;
+
+            const bool suspended = IsSuspended(snap, snapshotFresh);
+            const bool needed = settings.combatEventsEnabled || settings.combatContinuousMode;
+            std::optional<CombatEpisodeSignal> signal;
+
+            if (!skyrimNetAvailable || !needed) {
+                tracker.Reset();
+            } else {
+                const auto intervalMs =
+                    static_cast<std::int64_t>(settings.combatEventIntervalSeconds * 1000.0f);
+                const auto graceMs =
+                    static_cast<std::int64_t>(settings.continuousExitGraceSeconds * 1000.0f);
+                signal = tracker.Observe(snap.playerInCombat, suspended, NowMs(), intervalMs, graceMs);
+            }
+
+            if (!skyrimNetAvailable) {
+                return;
+            }
+
+            UpdateContinuousMode(settings, tracker.InEpisode(), suspended);
+            if (settings.combatEventsEnabled && signal) {
+                QueueCombatEvent(*signal);
             }
         }
 
@@ -2045,45 +2047,6 @@ namespace AgencyEngine::Director
                     // she is carrying may have been dealt with in that very
                     // exchange, and announcing it would have her raise a subject
                     // the party just closed.
-                    if (ConversationSinceCue(*it, reading)) {
-                        std::vector<std::pair<std::uint32_t, std::string>> unchecked;
-                        bool anyLeft = false;
-                        for (const auto& entry : entries) {
-                            if (entry.formID != it->formID || entry.unverified) {
-                                continue;
-                            }
-                            anyLeft = true;
-                            if (entry.lastCheckGameDays < it->setGameDays) {
-                                unchecked.emplace_back(entry.formID, entry.lens);
-                            }
-                        }
-
-                        if (!anyLeft) {
-                            logger::info("Everything {} was carrying was met while her cue waited — dropping it "
-                                         "rather than announcing a subject the party just closed",
-                                         it->speakerName);
-                            it = g_cues.erase(it);
-                            continue;
-                        }
-                        if (!unchecked.empty()) {
-                            // Queued rather than run here: checks go one at a
-                            // time through the Director's own queue, so the cue
-                            // waits across passes instead of blocking one. The
-                            // flag stops the queue being refilled every pass
-                            // while they run.
-                            if (!it->resolveRequested) {
-                                it->resolveRequested = true;
-                                resolveFirst.insert(resolveFirst.end(), unchecked.begin(), unchecked.end());
-                                logger::info("The party talked while {}'s cue waited — checking her {} carried "
-                                             "impulse(s) before announcing anything",
-                                             it->speakerName, unchecked.size());
-                            }
-                            ++it;
-                            continue;
-                        }
-                        // Everything has been asked about since the cue was set,
-                        // and something survived: the gate is satisfied.
-                    }
 
                     firing.push_back(Firing{ *it, heldMs });
                     it = g_cues.erase(it);
@@ -2091,9 +2054,6 @@ namespace AgencyEngine::Director
                 stillWaiting = g_cues.size();
             }
 
-            for (const auto& [formID, lens] : resolveFirst) {
-                RequestResolveCheck(formID, lens);
-            }
 
             // The UI's one line about waiting: how long the oldest cue has been
             // held, and whether any is still held at all.
@@ -2114,11 +2074,12 @@ namespace AgencyEngine::Director
                 });
                 logger::info("The party went quiet after {:.0f}s — cueing {}: {} fresh carr(ies) behind the cue, "
                              "{} open in her bio. Reading: {}",
-                             pending.heldMs / 1000.0, pending.cue.speakerName, pending.cue.carries, open,
+                             pending.heldMs / 1000.0, pending.cue.speakerName, pending.cue.ownership.carries, open,
                              DescribeReading(snap, reading));
                 if (auto* tasks = SKSE::GetTaskInterface()) {
                     tasks->AddTask([cue = pending.cue]() {
-                        if (!PapyrusBridge::DirectNarration(CueText(cue), cue.speakerUuid, cue.targetUuid)) {
+                        if (!PapyrusBridge::DirectNarration(CueText(cue), cue.speakerUuid,
+                                                            cue.ownership.target.id)) {
                             logger::error("The cue for {} failed to reach SkyrimNet — she keeps carrying it, and it "
                                           "colours what she says next",
                                           cue.speakerName);
@@ -2132,7 +2093,8 @@ namespace AgencyEngine::Director
                         // this narration produces, which is the one call it is
                         // for; the cue itself is already erased by now, which is
                         // why the grant is recorded rather than the cue read.
-                        PendingImpulses::GrantFloor(cue.formID);
+                        PendingImpulses::GrantFloor(cue.ownership.entryId, cue.formID, cue.ownership.target,
+                                                    cue.speakerUuid);
                     });
                 }
             }
@@ -2165,15 +2127,15 @@ namespace AgencyEngine::Director
                     // them — a FormID that now names somebody else names them
                     // for every lens at once.
                     if (!actor) {
-                        PendingImpulses::ClearAll(entry.formID,
-                                                  "stale (no actor with that FormID — load order changed)");
+                        PendingImpulses::StopCarryingActor(
+                            entry.formID, "stale (no actor with that FormID — load order changed)");
                         continue;
                     }
                     const char* name = actor->GetDisplayFullName();
                     if (!name || entry.speakerName != name) {
-                        PendingImpulses::ClearAll(entry.formID,
-                                                  std::format("stale ({:08X} is now '{}', not '{}')", entry.formID,
-                                                              name ? name : "(unnamed)", entry.speakerName));
+                        PendingImpulses::StopCarryingActor(
+                            entry.formID, std::format("stale ({:08X} is now '{}', not '{}')", entry.formID,
+                                                     name ? name : "(unnamed)", entry.speakerName));
                         continue;
                     }
                     logger::info("{} is still carrying something unsaid from before the load: {}", entry.speakerName,
@@ -2184,156 +2146,202 @@ namespace AgencyEngine::Director
 
         // Asks the LLM whether a pending impulse has since been dealt with, one
         // at a time, at its own in-game cadence.
-        //
-        // The TTL alone is not enough: the common way an agenda stops being live
-        // is that the conversation covered it, which no clock can see. Without
-        // this, her bio goes on saying she has been meaning to raise something
-        // she raised an hour ago — and there is no signal in the loop that would
-        // ever notice.
+        // Manual paid checks remain explicit. Automatic checks are dispatched
+        // by the evidence scheduler, never by elapsed game time.
         void PumpResolutionCheck(const Settings& settings, const GameSnapshot& snap)
         {
-            // Cleared from a SkyrimNet worker, so not a plain bool. One check in
-            // flight at a time: they are cheap but not free, and a stall would
-            // otherwise queue one per pass.
-            static std::atomic_bool checkInFlight{ false };
-
-            // One at a time, whether asked for by hand or by the clock. Checked
-            // before the queue is touched so a manual request stays queued
-            // rather than being dropped while another check is out.
-            if (checkInFlight.load()) {
-                return;
-            }
-
-            // A manual request beats the cadence and outranks anything merely
-            // due, because someone is sitting in the menu waiting for it.
-            std::optional<PendingImpulses::Entry> due;
-            bool                                  manual = false;
-            {
-                const auto       live = PendingImpulses::Snapshot();
-                std::scoped_lock lock{ g_resolveRequestLock };
-                while (!g_resolveRequests.empty() && !due) {
-                    const auto request = g_resolveRequests.front();
-                    g_resolveRequests.pop_front();
-                    // It may have been cleared — by hand, by the TTL, or by a
-                    // scheduled check — between the button press and now.
-                    for (const auto& entry : live) {
-                        if (entry.formID == request.formID && entry.lens == request.lens && !entry.unverified) {
-                            due = entry;
-                            manual = true;
-                            break;
+            if (const auto completed = g_resolutionScheduler.TakeResult()) {
+                if (!completed->success) {
+                    logger::warn("Resolution batch {} failed: {}", completed->batch.token.batchId,
+                                 completed->response.empty() ? "(no error text)" :
+                                                               OneLine(Elide(completed->response)));
+                } else {
+                    const auto verdicts =
+                        ResolutionScheduling::Scheduler::ParseVerdicts(completed->response, completed->batch);
+                    for (const auto& verdict : verdicts) {
+                        if (verdict.state == PendingImpulses::LifecycleState::RaisedUnmet) {
+                            PendingImpulses::MarkRaised(verdict.id, snap.gameDays);
+                        } else if (verdict.state == PendingImpulses::LifecycleState::Met) {
+                            PendingImpulses::MarkMet(verdict.id, snap.gameDays);
                         }
                     }
+                    WithState([&](Status& state) {
+                        state.resolutionEntriesClassified += verdicts.size();
+                    });
+                    logger::info("Resolution batch {} applied {} of {} requested verdicts",
+                                 completed->batch.token.batchId, verdicts.size(),
+                                 completed->batch.entries.size());
                 }
             }
 
-            if (!due) {
-                // Deliberately not gated on pendingBioInjection any more. Spoken
-                // entries are created on the narration path whether or not the
-                // bio block is switched on, and they are what confirms a ledger
-                // slot — gate the check on the bio setting and turning the bio
-                // off would silently mean no slot is ever confirmed, every one
-                // withdrawn at TTL, and the ledger degrades to nothing with no
-                // sign of why.
-                if (settings.pendingResolveGameMinutes <= 0.0f) {
-                    return;
+            std::vector<PendingImpulses::EntryId> manual;
+            {
+                std::scoped_lock lock{ g_resolveRequestLock };
+                while (!g_resolveRequests.empty()) {
+                    manual.push_back(g_resolveRequests.front().entryId);
+                    g_resolveRequests.pop_front();
                 }
-                due = PendingImpulses::NextDueForCheck(snap.gameDays, settings.pendingResolveGameMinutes);
             }
-            if (!due) {
+            g_resolutionScheduler.QueueManual(manual);
+
+            const auto entries = PendingImpulses::Snapshot();
+            std::vector<PendingImpulses::EntryId> fallback;
+            for (const auto& entry : entries) {
+                if (entry.state != PendingImpulses::LifecycleState::RaisedUnmet || !entry.proposal ||
+                    entry.fallbackConsumed || settings.pendingTtlGameMinutes <= 0.0f) {
+                    continue;
+                }
+                const auto ageMinutes = (snap.gameDays - entry.raisedGameDays) * 24.0 * 60.0;
+                const auto remaining = settings.pendingTtlGameMinutes - ageMinutes;
+                if (remaining > 0.0 &&
+                    remaining <= std::max(30.0, settings.pendingTtlGameMinutes * 0.1)) {
+                    fallback.push_back(entry.id);
+                }
+            }
+            g_resolutionScheduler.QueueFallback(fallback);
+
+            const auto cooldownMs =
+                static_cast<std::int64_t>(settings.pendingResolveCooldownSeconds * 1000.0f);
+            const auto batch = g_resolutionScheduler.TryDispatch(
+                entries, settings.pendingResolveEventInterval, cooldownMs, NowMs(),
+                [] { return PendingImpulses::NextEvidenceSequence(); });
+            if (!batch) {
                 return;
             }
-            // Stamped at dispatch rather than at the answer: a check that never
-            // comes back must not retry every second.
-            PendingImpulses::MarkChecked(due->formID, due->lens, snap.gameDays);
 
             nlohmann::json context;
-            context["npc_name"] = due->speakerName;
-            context["target_name"] = due->targetName;
-            context["impulse"] = due->text;
+            context["trigger"] = ResolutionScheduling::ToString(batch->trigger);
             context["game_time"] = FormatGameTime(snap.gameDays);
-            // Which question the prompt asks. When she has said it, her own
-            // raise is the premise and cannot be evidence that it landed —
-            // counting it would mark every beat settled the moment she opened
-            // her mouth, which is exactly the state this is here to notice.
-            context["spoken"] = due->spoken;
-            // Which of the two questions "has it been met?" means. For a topic,
-            // an answer of any kind meets it. For a proposal, agreement is a
-            // deferral: it is met when the events show the thing happened, or
-            // when someone plainly refused. Always set — an unset name is a
-            // render error in Inja, and a render error costs the check.
-            context["proposal"] = due->proposal;
-            context["marked_at"] = FormatGameTime(due->spoken ? due->spokenGameDays : due->createdGameDays);
-            // Her own tail, not the player's: the question is whether *she* has
-            // had this out, and a generous window because the whole point is to
-            // catch an exchange that happened while we were not looking.
-            context["recent_events"] = ParseEvents(SkyrimNetAPI::GetRecentEvents(
-                due->formID, std::max(settings.perFollowerEvents, 30), settings.eventTypeFilter));
+            // Callback evidence supplies stable watermarks and eligibility, but
+            // a paid resolver also needs the same bounded SkyrimNet history
+            // that impulse generation sees. This is context only: callback
+            // sequence IDs remain the authority for automatic retriggering.
+            context["recent_events"] =
+                ParseEvents(SkyrimNetAPI::GetRecentEvents(kPlayerFormID, settings.maxEvents,
+                                                          settings.eventTypeFilter));
+            context["follower_recent_events"] = nlohmann::json::array();
+            std::set<std::uint32_t> includedFollowers;
+            const std::string followerFilter = settings.followerEventTypeFilter[0] != '\0'
+                                                   ? settings.followerEventTypeFilter
+                                                   : settings.eventTypeFilter;
+            for (const auto& item : batch->entries) {
+                if (!includedFollowers.insert(item.entry.formID).second) {
+                    continue;
+                }
+                context["follower_recent_events"].push_back({
+                    { "speaker", item.entry.speakerName },
+                    { "formid", std::format("{:08X}", item.entry.formID) },
+                    { "events", ParseEvents(SkyrimNetAPI::GetRecentEvents(
+                                    item.entry.formID, settings.perFollowerEvents, followerFilter)) },
+                });
+            }
+            context["entries"] = nlohmann::json::array();
+            for (const auto& item : batch->entries) {
+                context["entries"].push_back({
+                    { "id", item.entry.id },
+                    { "speaker", item.entry.speakerName },
+                    { "target", item.entry.target.name },
+                    { "topic", item.entry.topic },
+                    { "impulse", item.entry.text },
+                    { "kind", item.entry.proposal ? "proposal" : "topic" },
+                    { "state", PendingImpulses::ToString(item.entry.state) },
+                    { "marked_at", FormatGameTime(
+                                       item.entry.state == PendingImpulses::LifecycleState::RaisedUnmet
+                                           ? item.entry.raisedGameDays
+                                           : item.entry.createdGameDays) },
+                    { "relevant_event_ids", item.relevantEventIds },
+                });
+                PendingImpulses::SetLastAttemptedEvidenceSequence(item.entry.id, batch->upperSequence);
+                if (batch->trigger == ResolutionScheduling::Trigger::PreExpiry && item.entry.proposal) {
+                    PendingImpulses::MarkFallbackConsumed(item.entry.id);
+                }
+            }
+            context["events"] = nlohmann::json::array();
+            for (const auto& event : batch->events) {
+                context["events"].push_back({
+                    { "id", event.sequence },
+                    { "source_id", event.sourceId },
+                    { "type", event.type },
+                    { "actor_id", event.actorId },
+                    { "target_id", event.targetId },
+                    { "text", event.text },
+                });
+            }
 
             const auto payload = context.dump();
-            logger::info("Asking whether {}'s {} impulse is still live ({}, {} bytes of context)", due->speakerName,
-                         due->lens.empty() ? "unnamed" : due->lens,
-                         manual ? "asked for from the UI" : "on the in-game cadence", payload.size());
-
-            checkInFlight.store(true);
+            logger::info("Resolution batch {}: {} entries, {} events, trigger {}, {} bytes",
+                         batch->token.batchId, batch->entries.size(), batch->events.size(),
+                         ResolutionScheduling::ToString(batch->trigger), payload.size());
             const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(
                 kResolvePrompt, kResolveVariant, payload,
-                // SkyrimNet worker thread. Touches only PendingImpulses, which
-                // has its own lock — no game objects, so no main-thread hop.
-                [formID = due->formID, lens = due->lens, name = due->speakerName,
-                 wasSpoken = due->spoken](std::string response, bool success) {
-                    checkInFlight.store(false);
-                    if (!success) {
-                        logger::warn("Resolution check for {} failed — leaving the impulse pending: {}", name,
-                                     response.empty() ? "(no error text)" : OneLine(Elide(response)));
-                        return;
-                    }
-
-                    // Deliberately conservative in both directions of doubt:
-                    // only an explicit, parseable yes clears it. A malformed
-                    // answer leaves the impulse pending, where the TTL will
-                    // still reach it — the alternative is a check that silently
-                    // eats agendas whenever the model drifts off format.
-                    bool resolved = false;
-                    const auto text = Unfence(response);
-                    const auto open = text.find('{');
-                    const auto close = text.rfind('}');
-                    if (open != std::string::npos && close != std::string::npos && close > open) {
-                        try {
-                            const auto parsed = nlohmann::json::parse(text.substr(open, close - open + 1));
-                            if (parsed.is_object() && parsed.contains("resolved")) {
-                                const auto& value = parsed["resolved"];
-                                if (value.is_boolean()) {
-                                    resolved = value.get<bool>();
-                                } else if (value.is_string()) {
-                                    const auto spelled = value.get<std::string>();
-                                    resolved = IEquals(spelled, "true") || IEquals(spelled, "yes");
-                                }
-                            }
-                        } catch (const std::exception&) {
-                            // Falls through to "still live", which is the safe
-                            // answer — see above.
-                        }
-                    }
-
-                    if (resolved) {
-                        // The only place anything is judged settled, and so the
-                        // only place a ledger slot is made durable. Every other
-                        // way an entry dies means the subject was never answered
-                        // and should be raisable again, which is what the
-                        // default Withdraw does.
-                        PendingImpulses::Clear(formID, lens,
-                                               wasSpoken ? "resolved (what she raised was met)"
-                                                         : "resolved (it was had out without her)",
-                                               PendingImpulses::Disposition::Confirm);
-                    } else {
-                        logger::debug("{}'s {} impulse is still live", name, wasSpoken ? "spoken" : "pending");
-                    }
+                [token = batch->token](std::string response, bool success) {
+                    g_resolutionScheduler.SubmitResult(token, std::move(response), success);
                 });
-
             if (!queued) {
-                checkInFlight.store(false);
-                logger::warn("SkyrimNet refused the resolution check for {} — it stays pending", due->speakerName);
+                g_resolutionScheduler.CancelInFlight();
+                logger::warn("SkyrimNet refused resolution batch {}", batch->token.batchId);
             }
+        }
+
+        void BeginRecentEvidenceSave(const std::string& saveId)
+        {
+            g_recentEventRecovery.BeginSave(saveId);
+            g_recentPollActiveMs = 0;
+            g_recentPollBaseline = false;
+            g_recentPollLastMilliseconds = 0.0;
+            g_recentPollTailEvents = 0;
+            g_recentPollRecoveredEvents = 0;
+            g_recentPollAttemptedBaseline = false;
+        }
+
+        std::vector<SkyrimNetAPI::RawDialogueEvent> PollRecentEvidence(
+            bool forcePoll, const GameSnapshot& snap)
+        {
+            const auto nowMs = NowMs();
+            const auto elapsedMs = g_recentPollTickMs == 0
+                                       ? 0
+                                       : std::clamp(nowMs - g_recentPollTickMs, std::int64_t{ 0 },
+                                                    std::chrono::milliseconds{ kPassInterval * 2 }.count());
+            g_recentPollTickMs = nowMs;
+            const bool active = !snap.gamePaused && snap.windowActive;
+            if (active) {
+                g_recentPollActiveMs += elapsedMs;
+            }
+            const auto intervalMs = std::chrono::milliseconds{ kRecentEventPollInterval }.count();
+            const bool baselineDue = !g_recentPollBaseline && !g_recentPollAttemptedBaseline;
+            if (!active || !SkyrimNetAPI::IsMemorySystemReady() ||
+                (!forcePoll && !baselineDue && g_recentPollActiveMs < intervalMs)) {
+                return {};
+            }
+            g_recentPollActiveMs = 0;
+
+            const auto startedMs = NowMs();
+            const auto payload = SkyrimNetAPI::GetRecentEvents(kPlayerFormID, kRecentEventTail, {});
+            auto result = g_recentEventRecovery.Poll(payload, startedMs, UnixNowMs());
+            g_recentPollAttemptedBaseline = true;
+            g_recentPollLastMilliseconds = static_cast<double>(NowMs() - startedMs);
+            g_recentPollTailEvents = result.tailSize;
+            g_recentPollRecoveredEvents = result.events.size();
+            if (!result.valid) {
+                ++g_recentPollFailures;
+                logger::warn("SkyrimNet recent-event recovery poll returned malformed data after {:.0f} ms",
+                             g_recentPollLastMilliseconds);
+                return {};
+            }
+            if (result.establishedBaseline) {
+                g_recentPollBaseline = true;
+                logger::info("SkyrimNet recent-event recovery baseline: {} event(s), {:.0f} ms, cadence {} s",
+                             result.tailSize, g_recentPollLastMilliseconds,
+                             std::chrono::seconds{ kRecentEventPollInterval }.count());
+            } else if (!result.events.empty()) {
+                logger::info("SkyrimNet recent-event recovery accepted {} missed event(s) from a {}-event tail "
+                             "in {:.0f} ms",
+                             result.events.size(), result.tailSize, g_recentPollLastMilliseconds);
+            } else {
+                logger::debug("SkyrimNet recent-event recovery: {} tail event(s), none missed, {:.0f} ms",
+                              result.tailSize, g_recentPollLastMilliseconds);
+            }
+            return std::move(result.events);
         }
 
         void PumpPendingImpulses(const Settings& settings, const GameSnapshot& snap)
@@ -2346,6 +2354,7 @@ namespace AgencyEngine::Director
             PendingImpulses::SetLedgerCap(settings.ledgerEnabled && settings.ledgerSlots > 0
                                               ? static_cast<std::size_t>(settings.ledgerSlots)
                                               : 1);
+            PendingImpulses::SetPartyEchoGameDays(settings.partyEchoGameDays);
 
             // Every configured lens, republished with it. Two reasons, and the
             // second is why rows with no slot override are published too: a slot
@@ -2366,13 +2375,71 @@ namespace AgencyEngine::Director
             // save ID. Running it from here rather than from kPostLoadGame
             // sidesteps the ordering question: we simply never act until
             // SkyrimNet can say which save we are in.
-            PendingImpulses::SyncPersistence(SkyrimNetAPI::GetSaveUniqueID(), snap.gameDays,
-                                             settings.pendingTtlGameMinutes);
-            VerifyRestoredImpulses();
-            PendingImpulses::ExpireOlderThan(snap.gameDays, settings.pendingTtlGameMinutes);
-            PumpResolutionCheck(settings, snap);
+            const auto saveId = SkyrimNetAPI::GetSaveUniqueID();
+            PendingImpulses::SyncPersistence(saveId, snap.gameDays, settings.pendingTtlGameMinutes);
+            const bool saveChanged = !saveId.empty() && g_resolutionScheduler.ActiveToken().saveId != saveId;
+            if (saveChanged) {
+                // A callback copied while the previous save was leaving has no
+                // save token of its own. Discard the transition window before
+                // activating the new token; normal play cannot emit dialogue
+                // while this first valid post-load snapshot is being acquired.
+                SkyrimNetAPI::DrainRawDialogueEvents();
+                g_resolutionScheduler.BeginSave(saveId);
+                BeginRecentEvidenceSave(saveId);
+            }
 
-            WithState([](Status& state) { state.pendingImpulses = PendingImpulses::Snapshot(); });
+            auto events = SkyrimNetAPI::DrainRawDialogueEvents();
+            g_recentEventRecovery.ObserveCallbacks(events);
+            auto recovered = PollRecentEvidence(saveChanged, snap);
+            events.insert(events.end(), std::make_move_iterator(recovered.begin()),
+                          std::make_move_iterator(recovered.end()));
+            for (auto& event : events) {
+                const bool npcSpeech = event.type == "dialogue" || event.type == "dialogue_npc";
+                const auto raisedEntry =
+                    npcSpeech ? PendingImpulses::MarkFloorOwnerRaisedByIdentity(
+                                    event.actorId, event.arrivalMs, snap.gameDays)
+                              : std::nullopt;
+                if (raisedEntry) {
+                    logger::info("Observed floor-owned speech from SkyrimNet actor {} — marked entry {} "
+                                 "raised with zero resolver calls",
+                                 event.actorId, *raisedEntry);
+                    WithState([](Status& state) { ++state.resolutionZeroCallRaises; });
+                }
+                g_resolutionScheduler.Enqueue({
+                    std::move(event.sourceId), event.actorId, event.targetId, std::move(event.type),
+                    std::move(event.text), event.arrivalMs, raisedEntry.value_or(0) });
+            }
+            VerifyRestoredImpulses();
+            PumpResolutionCheck(settings, snap);
+            auto expiryProtected = g_resolutionScheduler.QueuedFallbacks();
+            if (const auto activeBatch = g_resolutionScheduler.InFlight();
+                activeBatch && activeBatch->trigger == ResolutionScheduling::Trigger::PreExpiry) {
+                for (const auto& item : activeBatch->entries) {
+                    expiryProtected.push_back(item.entry.id);
+                }
+            }
+            PendingImpulses::Expire(snap.gameDays, settings.pendingTtlGameMinutes, expiryProtected);
+
+            const auto resolution = g_resolutionScheduler.Snapshot();
+            WithState([&](Status& state) {
+                state.floorOwners = PendingImpulses::FloorSnapshot();
+                state.personalMemoryRecords = PendingImpulses::LedgerSnapshot().size();
+                state.partyMemoryRecords = PendingImpulses::PartySnapshot().size();
+                state.pendingImpulses = PendingImpulses::Snapshot();
+                state.resolutionQueuedEvidence = resolution.queuedRaw + resolution.acceptedEvidence;
+                state.resolutionEligibleEntries = resolution.eligibleEntries;
+                state.resolutionBatchInFlight = resolution.batchInFlight;
+                state.resolutionLastTrigger = std::string{ ResolutionScheduling::ToString(resolution.lastTrigger) };
+                state.resolutionCallsAttempted = resolution.paidBatches;
+                state.resolutionQueueOverflow = resolution.queueOverflow;
+                state.resolutionStaleResults = resolution.staleResults;
+                state.resolutionEvidenceWatermark = PendingImpulses::EvidenceSequenceWatermark();
+                state.resolutionPollBaseline = g_recentPollBaseline;
+                state.resolutionPollLastMilliseconds = g_recentPollLastMilliseconds;
+                state.resolutionPollTailEvents = g_recentPollTailEvents;
+                state.resolutionPollRecoveredEvents = g_recentPollRecoveredEvents;
+                state.resolutionPollFailures = g_recentPollFailures;
+            });
         }
 
         void Loop()
@@ -2445,13 +2512,10 @@ namespace AgencyEngine::Director
                     PumpPendingCues(settings, snap, suspended);
                 }
 
-                // Ahead of the impulse gates, and not subject to them: holding
-                // continuous mode through a fight is a separate job from
-                // deciding whether anyone has something to raise. It needs
-                // SkyrimNet loaded, and nothing else.
-                if (available) {
-                    UpdateContinuousMode(settings, snap, snapshotFresh);
-                }
+                // Ahead of the impulse gates, and not subject to them. One
+                // shared episode drives both silent SkyrimNet combat signals
+                // and optional continuous-mode ownership.
+                UpdateCombat(settings, snap, snapshotFresh, available);
 
                 // Both of these run ahead of the impulse gates and are not
                 // subject to them: a pending impulse has to expire on schedule
@@ -2633,17 +2697,14 @@ namespace AgencyEngine::Director
         g_fireRequests.push_back(lensKey);
     }
 
-    void RequestResolveCheck(std::uint32_t formID, const std::string& lens)
+    void RequestResolveCheck(PendingImpulses::EntryId entryId)
     {
-        ResolveRequest request{ formID, lens };
+        ResolveRequest request{ entryId };
         std::scoped_lock lock{ g_resolveRequestLock };
-        // Deduplicated: the button is small, the call is not, and a double-click
-        // should not cost two. Two impulses from the same companion are two
-        // requests, though — different questions with different answers.
         if (std::ranges::find(g_resolveRequests, request) != g_resolveRequests.end()) {
             return;
         }
-        g_resolveRequests.push_back(std::move(request));
+        g_resolveRequests.push_back(request);
     }
 
     std::size_t PendingResolveRequests()
@@ -2685,8 +2746,10 @@ namespace AgencyEngine::Director
     void ResetTimer()
     {
         g_continuousReset.store(true);
+        g_combatEpisodeReset.store(true);
         // Belongs to the session we just left; a load is not a resume.
         g_resumedAtMs.store(0);
+        g_resolutionScheduler.BeginSave({});
         {
             // These name entries from the save we just left. PendingImpulses
             // has already forgotten them, so draining these would be harmless —

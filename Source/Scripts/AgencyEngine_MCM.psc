@@ -3,7 +3,7 @@ Scriptname AgencyEngine_MCM extends SKI_ConfigBase
 written to the DLL so this menu and SKSE Menu Framework share one live state.}
 
 Int Function GetVersion()
-	Return 5
+	Return 6
 EndFunction
 
 String[] _boolKeys
@@ -38,6 +38,7 @@ Int[] _lensAskOids
 
 Int[] _pendingViewOids
 Int[] _pendingCheckOids
+Int[] _pendingStopOids
 Int[] _pendingForgetOids
 Int[] _ledgerViewOids
 Int[] _historyViewOids
@@ -87,15 +88,15 @@ Function InitializePages()
 EndFunction
 
 Function InitializeSettingTables()
-	_boolKeys = New String[12]
-	_boolOids = New Int[12]
-	_boolDefaults = New Bool[12]
+	_boolKeys = New String[13]
+	_boolOids = New Int[13]
+	_boolDefaults = New Bool[13]
 	_boolKeys[0] = "enabled"
 	_boolDefaults[0] = True
 	_boolKeys[1] = "cues"
 	_boolDefaults[1] = True
 	_boolKeys[2] = "generateThought"
-	_boolDefaults[2] = True
+	_boolDefaults[2] = False
 	_boolKeys[3] = "requireFollower"
 	_boolDefaults[3] = True
 	_boolKeys[4] = "skipInCombat"
@@ -114,33 +115,38 @@ Function InitializeSettingTables()
 	_boolDefaults[10] = True
 	_boolKeys[11] = "debugLog"
 	_boolDefaults[11] = False
+	_boolKeys[12] = "combatEventsEnabled"
+	_boolDefaults[12] = False
 
-	_intKeys = New String[4]
-	_intOids = New Int[4]
-	_intMinimums = New Int[4]
-	_intMaximums = New Int[4]
-	_intDefaults = New Int[4]
-	_intSteps = New Int[4]
-	_intFormats = New String[4]
+	_intKeys = New String[5]
+	_intOids = New Int[5]
+	_intMinimums = New Int[5]
+	_intMaximums = New Int[5]
+	_intDefaults = New Int[5]
+	_intSteps = New Int[5]
+	_intFormats = New String[5]
 	ConfigureInt(0, "maxEvents", 5, 200, 40, 5, "{0}")
 	ConfigureInt(1, "perFollowerEvents", 0, 120, 10, 1, "{0}")
 	ConfigureInt(2, "forcedImpulseChance", 0, 100, 20, 1, "{0}%")
 	ConfigureInt(3, "ledgerSlots", 1, 20, 6, 1, "{0}")
+	ConfigureInt(4, "pendingResolveEventInterval", 1, 200, 30, 1, "{0}")
 
-	_floatKeys = New String[7]
-	_floatOids = New Int[7]
-	_floatMinimums = New Float[7]
-	_floatMaximums = New Float[7]
-	_floatDefaults = New Float[7]
-	_floatSteps = New Float[7]
-	_floatFormats = New String[7]
+	_floatKeys = New String[9]
+	_floatOids = New Int[9]
+	_floatMinimums = New Float[9]
+	_floatMaximums = New Float[9]
+	_floatDefaults = New Float[9]
+	_floatSteps = New Float[9]
+	_floatFormats = New String[9]
 	ConfigureFloat(0, "pendingTtlGameMinutes", 30.0, 4320.0, 720.0, 30.0, "{0} min")
-	ConfigureFloat(1, "pendingResolveGameMinutes", 0.0, 720.0, 180.0, 15.0, "{0} min")
+	ConfigureFloat(1, "partyEchoGameDays", 0.0, 30.0, 7.0, 0.5, "{1} days")
 	ConfigureFloat(2, "continuousExitGraceSeconds", 0.0, 60.0, 10.0, 1.0, "{0} s")
 	ConfigureFloat(3, "quietSeconds", 0.0, 60.0, 25.0, 1.0, "{0} s")
 	ConfigureFloat(4, "conversationSettleSeconds", 0.0, 300.0, 100.0, 5.0, "{0} s")
 	ConfigureFloat(5, "maxDeferSeconds", 5.0, 300.0, 60.0, 5.0, "{0} s")
 	ConfigureFloat(6, "quietPollSeconds", 0.25, 5.0, 1.0, 0.25, "{2} s")
+	ConfigureFloat(7, "combatEventIntervalSeconds", 5.0, 120.0, 15.0, 1.0, "{0} s")
+	ConfigureFloat(8, "pendingResolveCooldownSeconds", 60.0, 900.0, 240.0, 30.0, "{0} s")
 
 	_stringKeys = New String[2]
 	_stringOids = New Int[2]
@@ -162,6 +168,7 @@ Function InitializeSettingTables()
 	; actions per row remain below that limit; ledger rows page separately.
 	_pendingViewOids = New Int[15]
 	_pendingCheckOids = New Int[15]
+	_pendingStopOids = New Int[15]
 	_pendingForgetOids = New Int[15]
 	_ledgerViewOids = New Int[40]
 	_historyViewOids = New Int[25]
@@ -345,8 +352,9 @@ Function BuildImpulsesPage()
 	If !AgencyEngine_MCMNative.GetBool("pendingBioInjection")
 		carryFlags = OPTION_FLAG_DISABLED
 	EndIf
-	AddFloatSetting(0, "Forget it after", carryFlags)
-	AddFloatSetting(1, "Check whether it is still live every", carryFlags)
+	AddFloatSetting(0, "Retire it after", carryFlags)
+	AddIntSetting(4, "Automatic resolve interval", carryFlags)
+	AddFloatSetting(8, "Automatic resolve cooldown", carryFlags)
 
 	AddHeaderOption("Already raised")
 	AddBoolSetting(6, "Remember what each companion has raised")
@@ -354,6 +362,7 @@ Function BuildImpulsesPage()
 	If !AgencyEngine_MCMNative.GetBool("ledgerEnabled")
 		ledgerFlags = OPTION_FLAG_DISABLED
 	EndIf
+	AddFloatSetting(1, "Recent party echo memory", ledgerFlags)
 	AddIntSetting(3, "Subjects remembered per companion", ledgerFlags)
 	AddBoolSetting(7, "Refuse an impulse that repeats one", ledgerFlags)
 EndFunction
@@ -383,13 +392,23 @@ EndFunction
 Function BuildCombatPage()
 	AddHeaderOption("Combat")
 	AddBoolSetting(4, "Skip impulses while in combat")
+
+	AddHeaderOption("SkyrimNet combat events")
+	AddBoolSetting(12, "Emit a silent combat event stream")
+	Int eventFlags = OPTION_FLAG_NONE
+	If !AgencyEngine_MCMNative.GetBool("combatEventsEnabled")
+		eventFlags = OPTION_FLAG_DISABLED
+	EndIf
+	AddFloatSetting(7, "Ongoing event interval", eventFlags)
+
+	AddHeaderOption("Continuous mode")
 	AddBoolSetting(8, "Hold SkyrimNet continuous mode during combat")
 
-	Int continuousFlags = OPTION_FLAG_NONE
-	If !AgencyEngine_MCMNative.GetBool("combatContinuousMode")
-		continuousFlags = OPTION_FLAG_DISABLED
+	Int graceFlags = OPTION_FLAG_NONE
+	If !AgencyEngine_MCMNative.GetBool("combatContinuousMode") && !AgencyEngine_MCMNative.GetBool("combatEventsEnabled")
+		graceFlags = OPTION_FLAG_DISABLED
 	EndIf
-	AddFloatSetting(2, "Grace before switching off", continuousFlags)
+	AddFloatSetting(2, "Combat exit grace", graceFlags)
 EndFunction
 
 Function BuildLensesPage()
@@ -483,13 +502,13 @@ Function BuildCarriedPage()
 		_carriedOffset = 0
 	EndIf
 
-	AddHeaderOption("Carried, unsaid")
+	AddHeaderOption("Open impulses")
 	String summary = AgencyEngine_MCMNative.GetPendingSummary()
 	AddTextOption(summary, "", OPTION_FLAG_DISABLED)
 
 	If count > 0
-		_pendingCheckAllOID = AddTextOption("Check all now", "CHECK")
-		_pendingForgetAllOID = AddTextOption("Forget all", "FORGET")
+		_pendingCheckAllOID = AddTextOption("Run all paid checks now", "CHECK")
+		_pendingForgetAllOID = AddTextOption("Forget all pending and memory", "FORGET")
 	EndIf
 	Int queued = AgencyEngine_MCMNative.GetPendingQueued()
 	If queued > 0
@@ -503,8 +522,9 @@ Function BuildCarriedPage()
 		String value = AgencyEngine_MCMNative.GetPendingValue(row)
 		AddHeaderOption(label)
 		_pendingViewOids[slot] = AddTextOption(value, "VIEW")
-		_pendingCheckOids[slot] = AddTextOption("Run its still-live check", "CHECK")
-		_pendingForgetOids[slot] = AddTextOption("Forget this impulse", "FORGET")
+		_pendingCheckOids[slot] = AddTextOption("Run paid check now", "CHECK")
+		_pendingStopOids[slot] = AddTextOption("Stop carrying", "STOP")
+		_pendingForgetOids[slot] = AddTextOption("Forget subject memory", "FORGET")
 		slot += 1
 	EndWhile
 
@@ -592,11 +612,11 @@ Event OnOptionSelect(Int option)
 		Return
 	ElseIf option == _pendingCheckAllOID
 		Int queued = AgencyEngine_MCMNative.CheckAllPending()
-		ShowMessage(queued + " still-live check(s) queued.", False)
+		ShowMessage(queued + " paid resolution check(s) queued.", False)
 		ForcePageReset()
 		Return
 	ElseIf option == _pendingForgetAllOID
-		If ShowMessage("Forget every carried impulse? Each companion will stop carrying these subjects immediately.", True, "$Yes", "$No")
+		If ShowMessage("Forget every pending impulse and its owned personal/party memory?", True, "$Yes", "$No")
 			Int forgotten = AgencyEngine_MCMNative.ForgetAllPending()
 			ShowMessage(forgotten + " impulse(s) forgotten.", False)
 			ForcePageReset()
@@ -640,7 +660,17 @@ Event OnOptionSelect(Int option)
 	index = FindOption(_pendingCheckOids, option)
 	If index >= 0
 		If AgencyEngine_MCMNative.CheckPending(_carriedOffset + index)
-			ShowMessage("The still-live check is queued.", False)
+			ShowMessage("The paid resolution check is queued.", False)
+			ForcePageReset()
+		EndIf
+		Return
+	EndIf
+
+	index = FindOption(_pendingStopOids, option)
+	If index >= 0
+		String stopLabel = AgencyEngine_MCMNative.GetPendingLabel(_carriedOffset + index)
+		If ShowMessage("Stop carrying " + stopLabel + "? Confirmed personal and party memory remains.", True, "$Yes", "$No")
+			AgencyEngine_MCMNative.StopPending(_carriedOffset + index)
 			ForcePageReset()
 		EndIf
 		Return
@@ -649,7 +679,7 @@ Event OnOptionSelect(Int option)
 	index = FindOption(_pendingForgetOids, option)
 	If index >= 0
 		String pendingLabel = AgencyEngine_MCMNative.GetPendingLabel(_carriedOffset + index)
-		If ShowMessage("Forget " + pendingLabel + "? This immediately removes it from the companion's bio.", True, "$Yes", "$No")
+		If ShowMessage("Forget " + pendingLabel + " and its entry-owned personal/party memory?", True, "$Yes", "$No")
 			AgencyEngine_MCMNative.ForgetPending(_carriedOffset + index)
 			ForcePageReset()
 		EndIf
@@ -676,7 +706,7 @@ Event OnOptionSelect(Int option)
 		If AgencyEngine_MCMNative.SetBool(_boolKeys[index], value)
 			SetToggleOptionValue(option, value)
 			PersistSettings()
-			If index == 1 || index == 5 || index == 6 || index == 8 || index == 9 || index == 10
+			If index == 1 || index == 5 || index == 6 || index == 8 || index == 9 || index == 10 || index == 12
 				ForcePageReset()
 			EndIf
 		EndIf
@@ -879,10 +909,10 @@ Event OnOptionHighlight(Int option)
 		SetInfoText("Rearm every lens from the current game time.")
 		Return
 	ElseIf option == _pendingCheckAllOID
-		SetInfoText("Queue one still-live LLM check per open impulse. Checks run one at a time.")
+		SetInfoText("Queue one explicitly paid semantic batch for all open stable entry IDs. Duplicate requests coalesce.")
 		Return
 	ElseIf option == _pendingForgetAllOID
-		SetInfoText("Immediately remove every carried impulse from every companion's bio.")
+		SetInfoText("Immediately remove every pending row and all personal/party memory owned by those entries.")
 		Return
 	ElseIf option == _lastContextOID
 		SetInfoText("Show the exact context payload most recently sent to the impulse model.")
@@ -899,12 +929,17 @@ Event OnOptionHighlight(Int option)
 	EndIf
 	index = FindOption(_pendingCheckOids, option)
 	If index >= 0
-		SetInfoText("Queue one LLM check asking whether this subject is still live.")
+		SetInfoText("Queue one explicitly paid semantic check for this stable entry ID. Duplicate clicks coalesce.")
+		Return
+	EndIf
+	index = FindOption(_pendingStopOids, option)
+	If index >= 0
+		SetInfoText("Remove this open row. Confirmed personal and party memory remains.")
 		Return
 	EndIf
 	index = FindOption(_pendingForgetOids, option)
 	If index >= 0
-		SetInfoText("Immediately remove this impulse from the companion's bio.")
+		SetInfoText("Remove this row and personal/party records owned by this stable entry ID only.")
 		Return
 	EndIf
 	index = FindOption(_ledgerViewOids, option)
@@ -1001,7 +1036,7 @@ String Function BoolHelp(Int index)
 	ElseIf index == 1
 		Return "Send a vague cue when a companion receives a fresh impulse. Off leaves the subject in her bio to surface naturally."
 	ElseIf index == 2
-		Return "After a delivered impulse, spend a second LLM call to generate a private thought for its speaker."
+		Return "After carrying an impulse, optionally spend a second LLM call on a private thought. Off by default."
 	ElseIf index == 3
 		Return "Do not ask for impulses when the player has no follower present."
 	ElseIf index == 4
@@ -1020,6 +1055,8 @@ String Function BoolHelp(Int index)
 		Return "Tell the impulse prompt how long the party has been quiet so it can distinguish a pause from a dead scene."
 	ElseIf index == 11
 		Return "Log every pass plus full context and response payloads. This produces a large log."
+	ElseIf index == 12
+		Return "Emit silent agencyengine_combat lifecycle events for SkyrimNet triggers. This does not narrate or enter scene context."
 	EndIf
 	Return ""
 EndFunction
@@ -1033,17 +1070,19 @@ String Function IntHelp(Int index)
 		Return "Percent of eligible asks where the model is not allowed to answer with silence."
 	ElseIf index == 3
 		Return "Subjects remembered per companion for lenses that use the shared slot count."
+	ElseIf index == 4
+		Return "Accepted SkyrimNet events required per open impulse before an automatic paid checkpoint. Unrelated activity advances rather than postpones it."
 	EndIf
 	Return ""
 EndFunction
 
 String Function FloatHelp(Int index)
 	If index == 0
-		Return "How long an unsaid impulse remains in its speaker's bio, measured in in-game minutes."
+		Return "How long an open impulse remains in its speaker's bio, measured in in-game minutes."
 	ElseIf index == 1
-		Return "How often to spend an LLM call checking whether each carried subject has been resolved. Zero disables checks."
+		Return "Recent party-heard exact subjects suppress cross-follower echoes for this many game days. Personal memory remains separate."
 	ElseIf index == 2
-		Return "Real seconds out of combat before AgencyEngine releases continuous scene mode."
+		Return "Real seconds out of combat before AgencyEngine emits ended and releases continuous scene mode."
 	ElseIf index == 3
 		Return "Real seconds of silence required before a held cue can be sent."
 	ElseIf index == 4
@@ -1052,6 +1091,10 @@ String Function FloatHelp(Int index)
 		Return "Real seconds a cue may wait once it is otherwise eligible. The impulse remains carried if the cue is dropped."
 	ElseIf index == 6
 		Return "Real seconds between Papyrus samples of recording, speech queue, and recent audio state."
+	ElseIf index == 7
+		Return "Active real seconds between ongoing combat events. Menus, loading, and brief combat gaps do not count."
+	ElseIf index == 8
+		Return "Minimum real seconds between automatic paid resolution batches. The event interval and cooldown must both pass; manual checks bypass both."
 	EndIf
 	Return ""
 EndFunction

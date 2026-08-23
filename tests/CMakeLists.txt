@@ -8,6 +8,8 @@
 add_executable(AgencyEngineTests
     LedgerTests.cpp
     "${CMAKE_SOURCE_DIR}/src/PendingImpulse.cpp"
+    "${CMAKE_SOURCE_DIR}/src/ResolutionScheduler.cpp"
+    "${CMAKE_SOURCE_DIR}/src/SkyrimNetEvent.cpp"
 )
 
 target_compile_features(AgencyEngineTests PRIVATE cxx_std_23)
@@ -25,6 +27,18 @@ target_include_directories(AgencyEngineSettingsTests PRIVATE shim "${CMAKE_SOURC
 target_precompile_headers(AgencyEngineSettingsTests PRIVATE TestPCH.h)
 target_link_libraries(AgencyEngineSettingsTests PRIVATE nlohmann_json::nlohmann_json)
 add_test(NAME settings COMMAND AgencyEngineSettingsTests)
+
+# Combat episode timing is pure state: the game contributes only timestamped
+# IsInCombat/suspension observations. Test the encounter seam without SKSE so
+# brief combat drops, pauses, and long stalls stay deterministic.
+add_executable(AgencyEngineCombatEpisodeTests
+    CombatEpisodeTests.cpp
+    "${CMAKE_SOURCE_DIR}/src/CombatEpisode.cpp"
+)
+target_compile_features(AgencyEngineCombatEpisodeTests PRIVATE cxx_std_23)
+target_include_directories(AgencyEngineCombatEpisodeTests PRIVATE shim "${CMAKE_SOURCE_DIR}/include")
+target_precompile_headers(AgencyEngineCombatEpisodeTests PRIVATE TestPCH.h)
+add_test(NAME combat-episode COMMAND AgencyEngineCombatEpisodeTests)
 
 # shim/ ahead of include/ so that `#include "Logging.h"` from the ledger finds
 # the stub rather than the spdlog/SKSE one.

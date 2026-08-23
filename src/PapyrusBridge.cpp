@@ -145,66 +145,116 @@ namespace AgencyEngine::PapyrusBridge
 "verbose":"*{{msg}}*"
 })";
 
-        // Set once RegisterEventSchemas has dispatched. Read by RecordEvent to
-        // decide whether writing against kEventType is safe yet.
+        constexpr auto kCombatSchemaFields = R"([
+{"name":"phase","type":0,"required":true,"description":"Logical combat episode phase: started, ongoing, or ended."},
+{"name":"sequence","type":1,"required":true,"description":"Zero-based lifecycle sequence within this combat episode."},
+{"name":"elapsed_seconds","type":3,"required":true,"description":"Active real seconds in combat; menus, suspension, and exit-grace time are excluded."}
+])";
+
+        // Neutral diagnostics only. shortLivedEnabled is false below, so these
+        // strings do not become narration or scene context by themselves.
+        constexpr auto kCombatSchemaTemplates = R"({
+"recent_events":"Combat {{phase}} after {{elapsed_seconds}} active seconds",
+"raw":"Combat {{phase}} after {{elapsed_seconds}} active seconds",
+"compact":"Combat {{phase}}",
+"verbose":"Combat {{phase}} - sequence {{sequence}}, {{elapsed_seconds}} active seconds"
+})";
+
+        bool DispatchSchema(RE::BSScript::Internal::VirtualMachine* vm,
+                            std::string_view                         eventType,
+                            std::string_view                         displayName,
+                            std::string_view                         description,
+                            std::string_view                         fields,
+                            std::string_view                         templates,
+                            bool                                     isEphemeral,
+                            std::int32_t                              defaultTTLMs,
+                            bool                                     shortLivedEnabled,
+                            bool                                     interrupt)
+        {
+            RE::BSFixedString typeArg{ eventType };
+            RE::BSFixedString nameArg{ displayName };
+            RE::BSFixedString descriptionArg{ description };
+            RE::BSFixedString fieldsArg{ fields };
+            RE::BSFixedString templatesArg{ templates };
+
+            // Defaults on a Papyrus native are filled in by the compiler, so a
+            // call dispatched from C++ must supply all nine arguments.
+            auto* args = RE::MakeFunctionArguments(
+                std::move(typeArg), std::move(nameArg), std::move(descriptionArg), std::move(fieldsArg),
+                std::move(templatesArg), std::move(isEphemeral), std::move(defaultTTLMs),
+                std::move(shortLivedEnabled), std::move(interrupt));
+            RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> result;
+            const bool ok = vm->DispatchStaticCall(RE::BSFixedString{ kScript.data() },
+                                                   RE::BSFixedString{ "RegisterEventSchema" }, args, result);
+            delete args;
+            return ok;
+        }
+
+        // Set once RegisterEventSchemas has dispatched. Each writer checks its
+        // own schema because combat signals must be dropped, not downgraded to
+        // a narration-like persistent event.
         std::atomic_bool g_schemaReady{ false };
+        std::atomic_bool g_combatSchemaReady{ false };
     }
 
     bool RegisterEventSchemas()
     {
         auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
         if (!vm) {
-            logger::error("PapyrusBridge: the Papyrus VM singleton is null — cannot register the event schema");
+            logger::error("PapyrusBridge: the Papyrus VM singleton is null — cannot register event schemas");
+            g_schemaReady.store(false);
+            g_combatSchemaReady.store(false);
             return false;
         }
 
-        RE::BSFixedString eventType{ kEventType.data() };
-        RE::BSFixedString displayName{ "AgencyEngine Event" };
-        RE::BSFixedString description{ "Something a companion did on their own initiative - an impulse they chose "
-                                       "to raise unprompted, and whatever else AgencyEngine records later." };
-        RE::BSFixedString fields{ kSchemaFields };
-        RE::BSFixedString templates{ kSchemaTemplates };
-        // isEphemeral false + TTL 0: these are history, not scene decoration.
-        bool         isEphemeral = false;
-        std::int32_t defaultTTLMs = 0;
-        // The entire point. True here (SkyrimNet's default) would put a copy in
-        // scene context, where every NPC present reads it regardless of who the
-        // event names.
-        bool shortLivedEnabled = false;
-        // False: an impulse must not cut into speech that is already playing.
-        // The Director has its own conversation-aware hold for that decision.
-        bool interrupt = false;
+        g_schemaReady.store(false);
+        g_combatSchemaReady.store(false);
 
-        // Defaults on a Papyrus native are filled in by the *compiler*, so a
-        // call made from here has to supply all nine arguments itself.
-        auto* args = RE::MakeFunctionArguments(std::move(eventType), std::move(displayName), std::move(description),
-                                               std::move(fields), std::move(templates), std::move(isEphemeral),
-                                               std::move(defaultTTLMs), std::move(shortLivedEnabled),
-                                               std::move(interrupt));
-        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> result;
-
-        const bool ok = vm->DispatchStaticCall(RE::BSFixedString{ kScript.data() },
-                                               RE::BSFixedString{ "RegisterEventSchema" }, args, result);
-        delete args;
-
-        if (ok) {
+        const bool eventOk = DispatchSchema(
+            vm, kEventType, "AgencyEngine Event",
+            "Something a companion did on their own initiative - an impulse they chose to raise unprompted, and "
+            "whatever else AgencyEngine records later.",
+            kSchemaFields, kSchemaTemplates, false, 0, false, false);
+        if (eventOk) {
             g_schemaReady.store(true);
-            logger::info("PapyrusBridge: registered the '{}' event schema (scene-context copies off, so an event is "
-                         "read only by the actors named on it)",
+            logger::info("PapyrusBridge: registered the '{}' event schema with scene-context copies disabled",
                          kEventType);
         } else {
             // Not fatal — RecordEvent falls back — but it means every recorded
-            // impulse is public again, which is exactly the bug this schema
+            // prose event is public again, which is exactly the bug this schema
             // exists to fix.
-            logger::error("PapyrusBridge: DispatchStaticCall {}.RegisterEventSchema was refused by the VM. Recorded "
-                          "impulses will fall back to persistent events, which every nearby NPC can read.",
-                          kScript);
+            logger::error("PapyrusBridge: DispatchStaticCall {}.RegisterEventSchema was refused for '{}'. Recorded "
+                          "events will fall back to persistent events, which every nearby NPC can read.",
+                          kScript, kEventType);
             WithState([](Status& state) {
-                state.lastError = "the AgencyEngine event schema could not be registered — recorded impulses are "
+                state.lastError = "the AgencyEngine event schema could not be registered — recorded events are "
                                   "visible to every nearby NPC";
             });
         }
-        return ok;
+
+        // Five minutes is long enough to inspect a signal in SkyrimNet's event
+        // monitor and short enough that a 15-second stream cannot become history.
+        constexpr std::int32_t kCombatTTLMs = 5 * 60 * 1000;
+        const bool combatOk = DispatchSchema(
+            vm, kCombatEventType, "AgencyEngine Combat",
+            "A silent lifecycle signal for one logical player combat episode, intended for SkyrimNet triggers.",
+            kCombatSchemaFields, kCombatSchemaTemplates, true, kCombatTTLMs, false, false);
+        if (combatOk) {
+            g_combatSchemaReady.store(true);
+            logger::info("PapyrusBridge: registered the '{}' trigger schema (ephemeral, no scene-context copy, "
+                         "cannot interrupt)",
+                         kCombatEventType);
+        } else {
+            logger::error("PapyrusBridge: DispatchStaticCall {}.RegisterEventSchema was refused for '{}'. Combat "
+                          "events will be dropped rather than narrated or written against an unknown schema.",
+                          kScript, kCombatEventType);
+            WithState([](Status& state) {
+                state.lastError = "the AgencyEngine combat event schema could not be registered — combat trigger "
+                                  "events are disabled";
+            });
+        }
+
+        return eventOk && combatOk;
     }
 
     bool RecordEvent(const EventRecord& record)
@@ -232,6 +282,30 @@ namespace AgencyEngine::PapyrusBridge
 
         return Dispatch4("RegisterEventByUUID"sv, std::string{ kEventType }, payload.dump(), record.speakerUuid,
                          record.targetUuid);
+    }
+
+    bool RecordCombatEvent(std::string_view phase,
+                           int              sequence,
+                           double           elapsedSeconds,
+                           std::uint64_t    originatorUuid)
+    {
+        if (phase.empty()) {
+            logger::warn("PapyrusBridge: refusing to record a combat event with no phase");
+            return false;
+        }
+        if (!g_combatSchemaReady.load()) {
+            logger::warn("PapyrusBridge: the '{}' schema is not registered — dropping combat phase '{}' rather "
+                         "than creating narration or a persistent fallback",
+                         kCombatEventType, phase);
+            return false;
+        }
+
+        const nlohmann::json payload{
+            { "phase", std::string{ phase } },
+            { "sequence", sequence },
+            { "elapsed_seconds", elapsedSeconds },
+        };
+        return Dispatch4("RegisterEventByUUID"sv, std::string{ kCombatEventType }, payload.dump(), originatorUuid, 0);
     }
 
     bool RegisterPersistentEvent(const std::string& content, std::uint64_t originatorUuid, std::uint64_t targetUuid)

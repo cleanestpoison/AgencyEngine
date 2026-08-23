@@ -31,16 +31,23 @@ Curiosity every 6), whenever a follower is present and you're not in combat:
    it is held in the DLL and rendered into that companion's own character bio, verbatim, privately, with no LLM
    call to deliver it. One per companion per lens, newest first, so two lenses landing together coexist instead of
    one overwriting the other.
-5. Set a **cue** for her: a vague direct narration — she has something on her mind — that grants her a speaking
-   turn and names no subject, because the bio already carries it. One pending cue per companion however many
-   impulses she picks up, and it waits for the conversation to be *over* before it goes out — not merely for a
-   lull, which in a group chat is usually somebody thinking. She writes her own line; the plugin only supplies
-   the agenda. Until the cue fires, the subject only colours what she is already saying: she is carrying it, not
-   looking for a way into it.
-6. Optionally (*Also generate a private thought*, on by default) ask SkyrimNet for an unvoiced thought from the
-   speaker about what she has just decided she wants to raise. It is audienced to her alone and lands in her event
-   history — which is where this mod's own prompt reads thoughts back from, so it is the one thing in the loop
-   that carries forward. It generates asynchronously and so colours what she says from the *next* call onward.
+5. Set a **cue** for her: a vague direct narration that grants one exact entry a 30-second floor. If that
+   companion speaks after the grant, the entry becomes **raised/unmet** with no resolver call. The owner line is not
+   resolution evidence; only a later response or action can settle it. Raised/unmet dialogue uses speaker/target
+   participation rather than literal topic words, so paraphrases reach the semantic resolver. Untouched carries
+   remain in the background and raised/unmet subjects remain available to answer, but are never introduced as new
+   again.
+6. Optionally (*Also generate a private thought*, off by default) spend a second call on a private reaction. This is
+   not needed to carry or deliver the impulse.
+
+Resolution uses persisted event checkpoints rather than silence. AgencyEngine accepts low-latency SkyrimNet callbacks
+and also polls a bounded recent-event tail every 15 active real seconds, recovering callbacks SkyrimNet did not
+deliver without counting an event twice. The first poll after load establishes a historical baseline. Every accepted
+event receives a per-save sequence, and every open untouched or raised/unmet entry receives a semantic check after
+30 newer events; unrelated activity advances that checkpoint instead of postponing it. Automatic paid batches are
+globally rate-limited to one every four real minutes, and every independently due entry across followers shares the
+request. Manual checks bypass both gates, while a proposal retains one pre-expiry fallback. Per-entry watermarks
+prevent success, failure, malformed output, or reload from paying twice for the same evidence.
 
 **Most asks produce silence, by design.** A companion who demands something every two hours is a nag; one who does
 it twice in a night is a person. The Lenses tab counts carried and quiet asks separately, per lens, so you can see
@@ -54,6 +61,15 @@ because it isn't asked.
 Curiosity always targets the player. The other lenses may target another companion instead: an old grievance or
 unsaid affection between companions is the one thing SkyrimNet's per-NPC loops structurally can't produce, because
 nothing else sees the party as a party.
+
+Combat has a separate, opt-in integration for SkyrimNet trigger authors. AgencyEngine registers the silent,
+ephemeral `agencyengine_combat` schema and emits `started`, `ongoing`, and `ended` lifecycle events; it never calls
+direct narration for them and disables short-lived scene-context copies. `ongoing` defaults to every 15 active real
+seconds. Menus, loading screens, background suspension, and brief `IsInCombat()` drops do not advance that cadence.
+The Combat tab's shared exit grace defines both the `ended` boundary and optional continuous-mode release.
+
+The structured payload is `{ "phase", "sequence", "elapsed_seconds" }`. A SkyrimNet trigger can match the event
+type and use a schema condition such as `phase equals ongoing`, then choose its own audience and response.
 
 Everything is visible and tunable in-game through two parallel interfaces:
 
@@ -98,6 +114,7 @@ Without either UI dependency, AgencyEngine still runs from its shipped defaults 
 |------|------|
 | `plugin.cpp` | SKSE entry point, message listener, startup order |
 | `src/Director.cpp` | the impulse loop — timing, gating, context assembly, dispatch |
+| `src/CombatEpisode.cpp` | testable logical-fight clock shared by combat events and continuous mode |
 | `src/SkyrimNetAPI.cpp` | the only TU that includes SkyrimNet's `PublicAPI.h` |
 | `src/PapyrusBridge.cpp` | writes events back via `SkyrimNetApi` Papyrus natives |
 | `src/MCM.cpp` | validated Papyrus-native settings seam plus stable status/carried/ledger/history snapshots and actions |
@@ -107,7 +124,7 @@ Without either UI dependency, AgencyEngine still runs from its shipped defaults 
 | `Source/Scripts/AgencyEngine_MCM.psc` | SkyUI MCM presentation and option handling |
 | `tools/build_mcm_plugin.py` | reproducibly builds the minimal quest plugin that hosts the MCM |
 | `statics/` | mirrors the mod folder and contains compiled scripts plus generated plugin assets |
-| `tests/` | the offline ledger tests, off unless `AGENCYENGINE_BUILD_TESTS=ON` |
+| `tests/` | offline settings, combat-episode, and ledger contract tests, off unless `AGENCYENGINE_BUILD_TESTS=ON` |
 
 ### Threading
 
@@ -144,9 +161,9 @@ SkyrimNet to generate the content itself (`GenerateNPCThought`), which costs a c
 for her private *reaction* to carrying something, never for the agenda. `PapyrusBridge.h` and `PendingImpulse.h`
 record the full finding.
 
-The `agencyengine_event` schema is still registered on every load — schemas live in SkyrimNet's DLL rather than in
-the save — and the bridge can still write one, for anything the whole scene *should* know. Nothing on the impulse
-path does.
+The persistent `agencyengine_event` schema is still registered on every load for prose events the whole scene
+should know. The separate `agencyengine_combat` schema is ephemeral, cannot interrupt, and has
+`shortLivedEnabled = false`: its lifecycle records are silent trigger inputs rather than narration or scene context.
 
 ## Building
 
@@ -322,9 +339,10 @@ the shipped roster asks about twenty-two times an hour played; at the 6 to 10 he
 settings ask a third as often. Nothing about the config changes; the bill does.
 
 So the settings page reads the live timescale and prints the real-time length beside every in-game duration it
-shows — each lens's interval and cooldown, its countdown to the next ask, the carry TTL, the resolution check, and
-every clock on the Carried page. The log names the timescale on the first snapshot and again whenever it moves, and
-quotes both units on every ask. A timescale of `0` — some mods freeze the clock that way — means no lens will ever
+shows — each lens's interval and cooldown, its countdown to the next ask, the carry TTL, and every clock on the
+Carried page. Resolution has no game-time cadence: each entry advances every 30 accepted events, with a four-real-minute
+minimum between automatic paid batches.
+The log quotes both units on every ask. A timescale of `0` — some mods freeze the clock that way — means no lens will ever
 come due, and both the Status page and the log say so outright rather than showing a countdown that never moves.
 
 The Lenses tab can also set the timescale, because it is the number the cadence sliders are denominated in. It is
@@ -400,10 +418,10 @@ Each lens now evicts only within its own ring, and its size is the `Slots` colum
 Impulses tab). Rendering stays combined: the prompt sees one "already raised" list, so no lens repeats another's
 subject.
 
-A slot is written the moment a subject is carried, not when she says it: a cue grants her a turn without naming
-which subject she'll raise, so carry is the only event this mod can actually observe. It stays *provisional* until
-the resolution check confirms it (the subject was met, so it stays suppressed) or something else clears the impulse
-(nobody answered, so it goes back into circulation).
+An untouched entry creates provisional personal memory. Its floor-owned raise confirms personal memory across that
+companion's lenses and party-heard memory across followers. Untouched retirement withdraws its provisional record;
+raised/unmet retirement preserves confirmed records. Personal insertion/eviction remains per lens, while party
+memory retains at most 32 exact subjects for seven game days.
 
 There is a **shared ring** behind the per-lens ones, holding anything raised before the rings existed and anything
 raised by a lens that has since been renamed or deleted. Its slots suppress for every lens and are only ever

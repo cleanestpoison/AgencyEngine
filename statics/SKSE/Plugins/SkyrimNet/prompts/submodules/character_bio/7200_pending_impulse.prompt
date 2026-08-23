@@ -14,46 +14,18 @@
    after SkyrimNet's own long-term memories block (7000/7100) and before the
    speech style (9990). `npc` is the character whose bio is being rendered.
 
-   Three decorators, all answered by AgencyEngine.dll rather than by Papyrus.
-   agencyengine_pending_impulse returns what she has NOT said;
-   agencyengine_pending_spoken returns what she HAS said and had nothing back
-   on. Both are empty when there is nothing, which is the usual case, and both
-   return a markdown list — one line per impulse, newest first.
-   agencyengine_has_the_floor is "1" only in the half-minute after the mod
-   handed her a speaking turn, and picks which of the two closings below the
-   carried block gets. All three want a DLL of this version or newer: Inja
-   resolves decorator names at PARSE time, so an install that updates these
-   prompt files without the DLL loses its whole character bio, not one block.
+   Four decorators are answered by AgencyEngine.dll. Foreground is the exact
+   entry owning the active floor grant. Background is untouched carry without
+   that grant. Spoken is raised/unmet: already introduced, still outstanding.
+   Each returns a short markdown list or empty string.
 
-   CARRYING IS NOT LOOKING FOR A WAY IN, and the floor decorator is the whole
-   reason those can be told apart here. The carried block used to close by
-   telling her the subject was "where you steer when the talk gives you room",
-   on every dialogue call she made for as long as she carried it. Mid-
-   conversation a model reads a pause for breath as room, so she pivoted onto
-   her own subject in the middle of somebody else's — with no cue involved and
-   nothing in the log to explain it, since nothing had fired. The instruction to
-   raise it now renders only when a turn was actually granted.
+   Only foreground may open its subject. Background can colour the current
+   reply but must not interrupt it. Raised/unmet may answer if the other person
+   returns to it, but must never introduce itself again.
 
-   ONE PER LENS, SO THERE CAN BE SEVERAL. Lenses run on independent clocks, so
-   a companion can be carrying an aspiration, a standing she has never voiced
-   and a proposal at the same time. The DLL renders them newest first and this
-   file frames the first as the one most on her mind; that framing is the whole
-   mitigation for the stacking case, and it is the thing to tune if three
-   carried subjects come out as one overloaded speech rather than as one thing
-   at a time. (Recorded as an open validation in docs/adr/0004.)
-
-   The two wordings are not interchangeable, and she can need both at once.
-   Rendering the carried wording over something she has said would tell her she
-   has not said a thing she just said, on every dialogue call, and she would say
-   it again immediately.
-
-   NOTHING ENTERS THE SPOKEN STATE IN THIS VERSION. Delivery is a cue now — a
-   vague line granting her a speaking turn without naming which of the subjects
-   she is carrying she will take up — so the mod cannot attribute a raise to one
-   entry. What it does instead is ask: when the party has talked, the resolution
-   check runs before the next cue, and a subject somebody met is cleared. The
-   spoken block below is kept for entries restored from the version before the
-   cue, which can still be in that state.
+   A companion may carry one entry per lens. The DLL renders newest first.
+   Decorator names resolve at parse time, so these prompts and the DLL must ship
+   together.
 
    ---------------------------------------------------------------------------
    THE render_mode GUARD IS LOAD-BEARING. DO NOT DROP IT.
@@ -101,45 +73,22 @@
    Too hard on the carried side and the interruption is back, because that is
    the branch rendering on every ordinary turn she takes.
    ========================================================================== #}
-{% set agencyengine_pending = agencyengine_pending_impulse(npc.UUID) %}
+{% set agencyengine_foreground = agencyengine_pending_impulse(npc.UUID) %}
+{% set agencyengine_background = agencyengine_pending_background(npc.UUID) %}
 {% set agencyengine_spoken = agencyengine_pending_spoken(npc.UUID) %}
-{% set agencyengine_floor = agencyengine_has_the_floor(npc.UUID) %}
-{% if agencyengine_pending != "" %}
-## Something {{ decnpc(npc.UUID).name }} has been meaning to raise
-
-This is yours and nobody else's. You have not said it out loud, and nobody
-around you knows it is there. The first one listed is the one most on your
-mind; anything under it is further back, and it can stay there.
-
-{{ agencyengine_pending }}
-{% if agencyengine_floor != "" %}
-The talk has come to a stop and the turn is yours. Take it, and take one thing.
-Open it small — you have not committed to how it goes, and you would still walk
-it back if it did not land.
-{% else %}
-It is a subject you have been carrying, not a script and not a decision. It is
-what you are half thinking about underneath whatever you are actually saying,
-and it colours how you say it — what you notice, what you let pass, how much
-you give.
-
-You are not looking for a way into it. A conversation already under way about
-something else is not an opening, and cutting across one to reach your own
-subject is not what carrying it means. If the talk finds its own way there, go
-with it — you have been thinking about little else.
+{% if agencyengine_foreground != "" %}
+## Raise this now
+{{ agencyengine_foreground }}
+The floor is yours for this subject alone. Open it briefly.
 {% endif %}
+{% if agencyengine_background != "" %}
+## Other untouched subjects
+{{ agencyengine_background }}
+Background only. Do not introduce these without their own opening.
 {% endif %}
 {% if agencyengine_spoken != "" %}
-## Something {{ decnpc(npc.UUID).name }} has raised and not had answered
-
-You said this. It was not taken up — it was brushed past, deferred, or lost in
-whatever came next.
-
+## Already raised, still unmet
 {{ agencyengine_spoken }}
-
-You have had your say, and you are not looking to say it again. It sits between
-you and them, and it colours how you are with them: a little shorter, a little
-further back than you would otherwise be.
-
-Do not re-open it. If they come to it, you have plenty to say.
+Do not introduce these again. Respond only if the other person returns to them.
 {% endif %}
 {% endif %}

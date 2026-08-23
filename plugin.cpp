@@ -130,6 +130,17 @@ namespace AgencyEngine
                                 return PendingImpulses::Get(actor->GetFormID());
                             });
 
+                        SkyrimNetAPI::RegisterDecorator(
+                            PendingImpulses::kBackgroundDecoratorName,
+                            "AgencyEngine: untouched carried entries that do not own the active floor, newest "
+                            "first, as markdown list items; empty when there are none.",
+                            [](RE::Actor* actor) -> std::string {
+                                if (!actor) {
+                                    return {};
+                                }
+                                return PendingImpulses::GetBackground(actor->GetFormID());
+                            });
+
                         // Same block, two wordings, and a companion can need
                         // both at once — one lens's subject unsaid while
                         // another's waits on an answer. Telling her the second
