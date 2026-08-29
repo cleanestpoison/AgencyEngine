@@ -60,6 +60,9 @@ any natural follow-ups.
   heroic, benevolent, pursuing any particular quest, or carrying any history or allegiance the state does not say.
 - Carry one narrow topic and one exact information gap. No dialogue, bundled questions, requests, agenda decisions
   or settled grievances.
+- Bond depth may calibrate how personal a real question can be. A preference plus a matching stamped act may ground
+  curiosity about {{ player.name }}'s reasons, but disapproval to be voiced is Relationship material. External
+  spark, stance and progression are facts to respect, never unanswered transitions for this lens to initiate.
 {% endblock %}
 
 {% block lens_player_context %}

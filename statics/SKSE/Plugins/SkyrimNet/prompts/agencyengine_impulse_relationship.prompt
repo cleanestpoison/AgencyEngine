@@ -8,11 +8,10 @@
    that Lydia wants a bed, that is a different turn's question and this one
    should return silence.
 
-   REQUIRES SeverActions — the base's "Where X stands with..." section calls
-   its `sever_player_blurb` / `sever_companion_opinions` decorators, and Inja
-   resolves unknown functions at parse time. Without SeverActions installed,
-   untick this lens on the Lenses tab; the file is then never dispatched and
-   never parsed.
+   Player standing is optional and has one authority per actor. An enrolled
+   SkyrimNet Relationships actor uses its bond and preference state; otherwise
+   the base uses SeverActions, with DLL stand-ins keeping either absence
+   parse-safe. Companion-to-companion standing remains SeverActions' domain.
 
    Expect this lens to be quieter than the aspiration one, and expect that to
    be honest rather than broken. Standing is steady-state — the blurbs carry
@@ -59,6 +58,11 @@ two people and never *why today*. The timing has to come from the stamped materi
 nothing about, a moment the conversation moved past before they were done with it, a repetition the events show
 accumulating. A settled view with no timing attached is a fact about a relationship rather than an impulse; treat it
 as the weakest item on this list, never the strongest.
+
+**How external bond state may be used.** A preference becomes relationship material only when stamped evidence
+shows {{ player.name }} doing the liked or disliked thing; the preference alone is merely standing. Treat the bond's
+spark, stance and progression as read-only facts. Never reopen a declined romantic question, assume mutuality from
+an unanswered one, or write the transition that the relationship system owns.
 {% endblock %}
 
 {% block lens_examples %}

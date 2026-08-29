@@ -101,6 +101,10 @@ a supported way to configure anything (it has comments in it, and JSON has no co
 
 - SKSE64 or SKSE VR, plus the matching Address Library/CommonLib runtime support
 - **SkyrimNet** (built against beta23-rc2's `CppAPI/PublicAPI.h`; API v9)
+- Optional standing integrations:
+  - **SeverActions** — player rapport and companion-to-companion opinions
+  - **[SkyrimNet Relationships](https://github.com/deadohiosky48/SkyrimNet-Relationships) 1.1.2+** — authoritative
+    enrolled player bonds, boundaries and Romantasy preferences; it retains its own Romantasy requirement
 - Optional configuration interfaces (install either or both):
   - **SKSE Menu Framework** — optional; provides the full status and diagnostic interface where supported
   - **SkyUI / SkyUI VR** — optional; provides the Mod Configuration Menu, including the VR configuration path
@@ -384,17 +388,25 @@ couldn't do any of this, because a template can't remember anything.
 
 **Unticking a lens switches it off**, which is the escape hatch for a lens whose prompt needs a mod you don't have.
 
-The relationship lens is the one case of that, and it doesn't need the escape hatch: it calls SeverActions'
-`sever_player_blurb` and `sever_companion_opinions` decorators, and Inja resolves unknown functions when it
-*parses* a file — so a flag inside the template couldn't save an install without SeverActions. The DLL registers
-inert stand-ins under both names when SeverActions isn't in the load order, and the template already treats an
-empty blurb as "nothing settled yet". **SeverActions is therefore optional**: install it and the lens has standing
-data to work from, leave it out and the lens still runs on thoughts and events alone.
+Standing integrations are optional for every lens. The shared base calls SeverActions'
+`sever_player_blurb` / `sever_companion_opinions` and SkyrimNet Relationships'
+`get_romance` / `romance_physical_ok`. Inja resolves unknown functions when it *parses* a file, before a template
+guard can help, so the DLL registers inert stand-ins only when the plugin owning each decorator is absent. All four
+lenses therefore remain usable with neither integration installed.
 
-Expect the relationship lens to be quieter than the aspiration one, and expect that to be honest. Standing is
-steady-state: the blurbs carry no timestamp and no delta, so they supply the *subject* and never the *why now*. The
-per-lens carried/quiet counters on the Lenses tab are the readout — a lens that is silent 22 times out of 23 is an
-argument for tracked threads (tier 2), not for loosening its prompt.
+Player standing has one authority per companion. If SkyrimNet Relationships 1.1.2+ reports that companion enrolled,
+its qualitative bond, recorded stance, availability, authored reason and limit, established orientation, and all
+authored Romantasy likes/dislikes replace the SeverActions player blurb. Missing Relationships fields stay unknown;
+they are not filled from a second source. If the companion is not enrolled, the existing SeverActions player blurb
+remains the fallback. SeverActions companion-to-companion opinions remain independent and render in either case.
+
+This integration is automatic and read-only. There is no AgencyEngine setting or UI row for it, and AgencyEngine
+does not initiate or record Relationships spark, consent, bond or progression transitions. It consumes the external
+mod's exposed state without shipping that mod's files or copying its character-bio prompts.
+
+Standing remains steady-state: it supplies *what* exists, never *why now*. Stamped thoughts and events still supply
+timing, and the per-lens carried/quiet counters on the Lenses tab remain the readout. A relationship lens that is
+silent 22 times out of 23 is an argument for tracked threads, not for treating a static bond as a new event.
 
 There is no general prompt behind the lenses. Switching every lens off doesn't fall back to anything — it stops
 the loop, and the Status page says so rather than quietly asking a broader question.

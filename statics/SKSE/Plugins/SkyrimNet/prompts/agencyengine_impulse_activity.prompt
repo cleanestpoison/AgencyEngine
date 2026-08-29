@@ -60,6 +60,10 @@ scene.
   turned down without either of them losing anything. Never a first move, never invented on top of a neutral
   standing, and never written past the asking. If the standing does not evidence it, this item is not available and
   the rest of the list is.
+- **Relationships boundaries are exact.** Personal likes can guide which invitation fits but are not rules imposed
+  on {{ player.name }}. Romantic commitment and physical availability are separate: current physical availability
+  may license a physical invitation without romance, but never compels one. Present or permanent unavailability
+  prohibits it, and a fixed personal limit overrides every other licence.
 
 **Who they ask matters.** A proposal aimed at another companion is wanted exactly as much as one aimed at
 {{ player.name }} — a party whose whole life routes through the player is not a party. Aim it at whoever the

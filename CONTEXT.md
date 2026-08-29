@@ -85,6 +85,13 @@ prose blocks only. Each lens runs on its own **interval** and **cooldown**; ther
 between them, because asking two questions is not worse than asking one.
 _Avoid_: mode, prompt type, category
 
+**Lens context**:
+The evidence assembled for a lens to judge during an ask: companion profiles, **standing**, stamped thoughts and
+events, and memories. External relationship systems may enrich this context without owning the resulting impulse.
+Their state is normalized into domain facts rather than copied as dialogue instructions or exposed as raw scores.
+Lens context is distinct from character-bio guidance that shapes how a companion speaks after they have the floor.
+_Avoid_: prompt injection, dialogue instructions, bio, raw integration state
+
 **Lens roster**:
 Which lenses exist. It is *content*, shipped in the build alongside the prompt files it names, not
 configuration — a user switches a lens on or off, moves its **interval** and **cooldown**, sets its
@@ -190,8 +197,14 @@ _Avoid_: turn, cycle
 
 **Standing**:
 Where one companion sits with another, or with the player. Sourced externally, undated and
-steady-state — good for *what* is between two people, useless for *why today*. Timing must always come
-from stamped thoughts and events.
+steady-state — good for *what* is between two people, useless for *why today*. For player standing, enrollment in a
+dedicated bond record makes that record authoritative even when some facets remain unknown; general rapport is the
+fallback only when no such enrollment exists, never a field-by-field supplement. Companion-to-companion standing
+remains independent. Timing must always come from stamped thoughts and events.
+A progression score alone is not a dedicated bond record: without bond kind, stance and boundaries it cannot
+supersede a complete source of player standing.
+An unknown facet stays silent: absence of a preference, limit, reason or established orientation is not a neutral
+answer and is never filled with a default character fact.
 _Avoid_: relationship score, rapport, affinity
 
 ## Relationships
@@ -212,6 +225,26 @@ _Avoid_: relationship score, rapport, affinity
 - An **Untouched** impulse owns provisional **Personal memory**; raising confirms personal and
   **Party memory**, while untouched retirement withdraws only its provisional record
 - Each **Lens** evicts only within its own personal-memory ring, so lenses cannot bury each other's subjects
+- Every lens receives the same **Lens context**. Each lens may use shared **Standing** only within its own subject
+  boundary; static standing can shape disposition, licence and depth, but never supplies *why today*
+- Bond kind and bond depth are independent. Depth remains a six-stage qualitative progression for both platonic
+  and romantic bonds; implementation tier names and numbers are not domain language
+- Decision-relevant **Standing** includes bond kind and depth, the other person's stated stance, present
+  availability, established preferences, and fixed boundaries. Form of address belongs to character-bio guidance;
+  progress toward a scoring threshold is neither standing nor timing
+- A preference may supply a subject only where the lens owns that question and stamped evidence shows the
+  preferred or disliked act occurring. Without that occurrence it is static **Standing** and produces silence
+- Preferences are one companion's personal leanings, never global morality or rules they recite to the player
+- A reaction surfaced by another relationship system does not automatically spend an AgencyEngine subject.
+  The lens judges the full recent exchange under its ordinary repetition rules; there is no cross-system veto
+- External **Standing** is read-only context. Its owning relationship system alone asks and records questions that
+  change bond kind, consent stance or progression; an AgencyEngine impulse may not impersonate that transition
+- A declined romantic stance is not reopened or hinted around. An unanswered stance grants no claim or assumed
+  mutuality; until the owning system resolves it, AgencyEngine remains within the established non-transition state
+- Romantic commitment and physical availability are separate axes. Present physical availability may license, but
+  never compel, an **Activity** proposal without romance; physical unavailability is a hard prohibition
+- A permanent physical boundary and present unavailability are different facts. Waiting may change only the latter
+- A fixed personal limit overrides every licence supplied by bond, stance, romantic availability or physical availability
 - **Standing** supplies the subject for the **Relationship lens** and the licence for the **Activity lens**
 - The player's summary and appearance join the companion context for the **Curiosity lens**; the subject
   remains one genuine unknown rather than an assumption about the player's identity or history

@@ -238,6 +238,12 @@ Bad, in every register:
 Read all of what follows, but the agenda for this turn comes from what each companion is trying to do.
 {% endblock %}
 
+{# SkyrimNet Relationships 1.1.2 exposes bond state through decorators but
+   keeps Romantasy opinions as faction ranks. Keep the complete vocabulary here
+   once for every lens. Each enrolled follower is scanned in one pass below. #}
+{% set rom_pref_ids = ["ROM_LocationsDiscovered","ROM_DungeonsCleared","ROM_StandingStonesFound","ROM_ChestsLooted","ROM_DaysPassed","ROM_SkillIncreases","ROM_SkillBooksRead","ROM_SpellsLearned","ROM_ShoutsLearned","ROM_DragonSoulsCollected","ROM_PeopleKilled","ROM_AnimalsKilled","ROM_CreaturesKilled","ROM_UndeadKilled","ROM_DaedraKilled","ROM_AutomatonsKilled","ROM_CriticalStrikes","ROM_SneakAttacks","ROM_Backstabs","ROM_WeaponsDisarmed","ROM_BunniesSlaughtered","ROM_Barters","ROM_Persuasions","ROM_Bribes","ROM_Intimidations","ROM_LocksPicked","ROM_PocketsPicked","ROM_ItemsStolen","ROM_Assaults","ROM_Murders","ROM_HorsesStolen","ROM_Trespasses","ROM_WeaponsMade","ROM_ArmorMade","ROM_MagicItemsMade","ROM_PotionsMixed","ROM_PoisonsMixed","ROM_SoulsTrapped","ROM_QuestsCompleted","ROM_MiscObjectivesCompleted","ROM_MainQuestsCompleted","ROM_SideQuestsCompleted","ROM_CompanionsCompleted","ROM_CollegeCompleted","ROM_ThievesCompleted","ROM_DarkBrotherhoodCompleted","ROM_CivilWarCompleted","ROM_DaedricCompleted","ROM_DawnguardCompleted","ROM_DragonbornCompleted","ROM_QuestlinesCompleted","ROM_DiseasesContracted","ROM_DaysVampire","ROM_NecksBitten","ROM_VampirismCures","ROM_DaysWerewolf","ROM_WerewolfTransformations","ROM_Mauls"] %}
+{% set rom_pref_labels = ["discovering new places","clearing dungeons","finding standing stones","looting chests","spending days travelling together","improving skills","reading skill books","learning spells","learning shouts","collecting dragon souls","killing people","killing animals","hunting creatures","destroying undead","killing daedra","destroying dwarven automatons","landing critical strikes","attacking from stealth","backstabbing opponents","disarming opponents","killing rabbits","bartering","persuading people","bribing people","intimidating people","picking locks","picking pockets","stealing items","assaulting people","murdering people","stealing horses","trespassing","forging weapons","forging armor","enchanting items","mixing potions","mixing poisons","trapping souls","completing quests","completing miscellaneous objectives","advancing the main quest","helping ordinary people","working with the Companions","working with the College of Winterhold","working with the Thieves Guild","working with the Dark Brotherhood","taking part in the civil war","dealing with Daedric Princes","fighting vampires","handling affairs on Solstheim","completing long questlines","contracting diseases","living as a vampire","feeding as a vampire","curing vampirism","living as a werewolf","transforming into a werewolf","mauling prey as a werewolf"] %}
+
 {% for follower in followers %}
 ## {{ follower.name }}
 
@@ -251,32 +257,110 @@ Read all of what follows, but the agenda for this turn comes from what each comp
 {{ render_character_profile("bio_aspirations", follower.UUID) }}
 
 {# ---------------------------------------------------------------------
-   Standing — sourced from SeverActions, which keeps a per-companion
-   rapport/trust/loyalty model and regenerates these blurbs as prose on
-   milestones. They are steady-state summaries: no timestamp, no delta,
-   no age. So they are good for *subject* and useless for *why now* — a
-   blurb can say Lydia thinks Kaidan grandstands, never that it got worse
-   this week. Timing still has to come from the thoughts and events below.
+   Player standing comes from one authority. SkyrimNet Relationships owns it
+   for an enrolled actor; otherwise SeverActions supplies the existing blurb.
+   The DLL registers inert decorators for either absent integration because
+   Inja resolves names before evaluating these branches.
 
-   These two decorators come from SeverActions. Inja resolves unknown
-   functions when it parses the file, so a flag guarding them would not save
-   an install that lacks it — which is why the DLL registers inert stand-ins
-   under both names when SeverActions is not in the load order (see
-   RegisterRelationshipFallbacks in plugin.cpp). Both branches below already
-   handle the empty string, so the lens runs either way; without SeverActions
-   it simply has no standing data to work from.
+   Relationships state is steady, read-only context. It can establish what the
+   bond permits and what this person values, never that something changed
+   today. Its spark, consent and progression transitions remain that mod's to
+   ask and record. Companion-to-companion opinions remain SeverActions' domain.
    --------------------------------------------------------------------- #}
 ### Where {{ follower.name }} stands with the people they travel with
-The two passages below are written **to {{ follower.name }}**, in the second person — every "you" in them means
-{{ follower.name }}, not {{ player.name }} and not you the reader. They are undated summaries: *what* stands between
-two people, never *why today*. Timing comes from the stamped thoughts and events.
+Everything here is an undated fact: *what* stands between people, never *why today*. Timing still comes from stamped
+thoughts and events. External bond state is read-only — do not initiate, answer, or claim a change to its spark,
+consent, bond kind, depth, or progression.
 
+{% set rom = get_romance(follower.UUID) %}
+{% if rom and rom.enrolled %}
+**On {{ player.name }}** —
+{% set rom_tier = default(rom.level, 0) %}
+{% set rom_sparked = default(rom.sparked, 0) %}
+{% set rom_stance = default(rom.stance, 0) %}
+{% set rom_ok = default(rom.romanceOk, 0) %}
+{% if rom_sparked != 1 %}
+{% if rom_tier == 0 %}
+They are new travelling companions; neither warmth nor trust is established yet.
+{% elif rom_tier == 1 %}
+There is growing fondness and the beginning of limited trust.
+{% elif rom_tier == 2 %}
+This is an established friendship with easy company and practical trust.
+{% elif rom_tier == 3 %}
+This is a deep friendship: personal trust is established and {{ player.name }}'s regard matters.
+{% elif rom_tier == 4 %}
+This is steadfast, costly loyalty and explicitly non-romantic love.
+{% else %}
+This is a permanent platonic life bond with an assumed shared future.
+{% endif %}
+{% else %}
+{% if rom_tier == 0 %}
+There is a new, unnamed romantic shift; it is unspoken and uncertain.
+{% elif rom_tier == 1 %}
+There is genuine romantic fondness, still guarded and only partly acknowledged.
+{% elif rom_tier == 2 %}
+This is a close bond with consciously emerging romantic desire.
+{% elif rom_tier == 3 %}
+This is deep trust with acknowledged but unresolved romantic tension.
+{% elif rom_stance == -1 %}
+The romantic feeling was declined. The friendship was deliberately retained, and the question is not open again.
+{% elif rom_stance == 0 %}
+Deep romantic feeling exists but remains unanswered; there is no mutuality or claim to assume.
+{% elif rom_ok != 1 %}
+The bond is deep, but romantic partnership with {{ player.name }} is unavailable; this is not a source of longing
+or regret.
+{% elif rom_tier == 4 %}
+They are mutually acknowledged lovers.
+{% else %}
+They are settled life partners with an assumed shared future.
+{% endif %}
+{% endif %}
+
+{% if rom_ok == 1 %}
+- No established boundary blocks romantic progression with {{ player.name }}; the recorded bond and stance still
+  determine what exists now.
+{% else %}
+- Romantic progression with {{ player.name }} is unavailable.
+{% endif %}
+{% set rom_phys = romance_physical_ok(follower.UUID) %}
+{% set rom_phys_min = default(rom.physMinTier, 4) %}
+{% if rom_phys == "true" %}
+- Physical intimacy is currently available independently of romantic commitment. That permits an invitation; it
+  does not require one.
+{% elif rom_phys_min < 0 %}
+- Physical intimacy is a permanent boundary. Waiting, greater depth, or romantic commitment cannot open it.
+{% else %}
+- Physical intimacy is not currently available. This is a present boundary, not evidence of permanent refusal.
+{% endif %}
+{% set rom_why = default(rom.why, "") %}
+{% if rom_why != "" %}
+- How {{ follower.name }} approaches closeness: {{ rom_why }}
+{% endif %}
+{% set rom_orientation = default(rom.orientation, "") %}
+{% if rom_orientation != "" %}
+- Established orientation: attracted to {{ rom_orientation }}.
+{% endif %}
+{% for i in range(length(rom_pref_ids)) %}
+{% set rom_pref_rank = get_faction_rank(follower.UUID, at(rom_pref_ids, i)) %}
+{% if rom_pref_rank == 1 %}
+- Personal leaning: likes {{ at(rom_pref_labels, i) }}.
+{% elif rom_pref_rank == 0 %}
+- Personal leaning: dislikes {{ at(rom_pref_labels, i) }}.
+{% endif %}
+{% endfor %}
+{% set rom_limit = default(rom.limit, "") %}
+{% if rom_limit != "" %}
+- Fixed personal limit: {{ rom_limit }} This overrides every licence above.
+{% endif %}
+{% else %}
 {% set player_blurb = sever_player_blurb(follower.UUID) %}
 {% if player_blurb != "" %}
 **On {{ player.name }}** — {{ player_blurb }}
 {% else %}
 **On {{ player.name }}** — nothing settled yet; {{ follower.name }} is still working out what to make of them.
 {% endif %}
+{% endif %}
+
 {% set companion_opinions = sever_companion_opinions(follower.UUID) %}
 {% if companion_opinions != "" %}
 **On the other companions** — {{ companion_opinions }}

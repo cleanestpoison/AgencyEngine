@@ -22,40 +22,48 @@ namespace AgencyEngine
             return handler && handler->LookupModByName(name) != nullptr;
         }
 
-        // The relationship lens' base prompt calls sever_player_blurb and
-        // sever_companion_opinions, two decorators supplied by SeverActions.
-        // Inja resolves decorator names when it *parses* a template, so on an
-        // install without SeverActions those names are a parse error that costs
-        // the entire impulse — not an empty section in one prompt. That is also
-        // why no template flag can guard them: the failure happens before any
-        // {% if %} is evaluated.
+        // The shared lens prompt calls decorators supplied by optional
+        // relationship mods. Inja resolves decorator names when it parses a
+        // template, so a missing name costs the whole impulse before any
+        // template guard can run.
         //
-        // So make the dependency optional from this side instead. Registering
-        // inert stand-ins under the same names when SeverActions is absent lets
-        // the template parse, and the prompt already branches on "" and falls
-        // back to "nothing settled yet" — the lens runs, with thinner material.
-        //
-        // Keyed on the plugin rather than on asking SkyrimNet whether the
-        // decorator exists: SeverActions registers its own from Papyrus when a
-        // save loads, long after kDataLoaded. A presence check here would be
-        // false even where it is installed, and the stand-in would then shadow
-        // the real thing for the rest of the session.
+        // Register inert stand-ins only when the plugin that owns a name is not
+        // in the load order. Both integrations register their real decorators
+        // from Papyrus after kDataLoaded; checking SkyrimNet's registry here
+        // would see them as absent and permanently shadow them for the session.
         void RegisterRelationshipFallbacks()
         {
             if (IsPluginLoaded("SeverActions.esp"sv)) {
                 logger::info("SeverActions is in the load order; leaving its relationship decorators to it");
-                return;
+            } else {
+                for (const auto* name : { "sever_player_blurb", "sever_companion_opinions" }) {
+                    SkyrimNetAPI::RegisterDecorator(
+                        name,
+                        "AgencyEngine: inert stand-in for the SeverActions decorator of this name, which is not "
+                        "installed. Always returns an empty string.",
+                        [](RE::Actor*) -> std::string { return {}; });
+                }
+                logger::info("SeverActions is not installed; registered inert stand-ins for its two relationship "
+                             "decorators. The lenses will run without SeverActions standing data.");
             }
 
-            for (const auto* name : { "sever_player_blurb", "sever_companion_opinions" }) {
+            if (IsPluginLoaded("SNRom_Integration.esl"sv)) {
+                logger::info(
+                    "SkyrimNet Relationships is in the load order; leaving its relationship decorators to it");
+            } else {
                 SkyrimNetAPI::RegisterDecorator(
-                    name,
-                    "AgencyEngine: inert stand-in for the SeverActions decorator of this name, which is not "
-                    "installed. Always returns an empty string.",
-                    [](RE::Actor*) -> std::string { return {}; });
+                    "get_romance",
+                    "AgencyEngine: inert stand-in for SkyrimNet Relationships when it is not installed. Reports "
+                    "that the actor is not enrolled.",
+                    [](RE::Actor*) -> std::string { return R"({"enrolled":false})"; });
+                SkyrimNetAPI::RegisterDecorator(
+                    "romance_physical_ok",
+                    "AgencyEngine: inert stand-in for SkyrimNet Relationships when it is not installed. Reports "
+                    "that physical intimacy is unavailable.",
+                    [](RE::Actor*) -> std::string { return "false"; });
+                logger::info("SkyrimNet Relationships is not installed; registered inert stand-ins for "
+                             "get_romance and romance_physical_ok. The lenses will use SeverActions standing.");
             }
-            logger::info("SeverActions is not installed; registered inert stand-ins for its two relationship "
-                         "decorators. The relationship lens will run without standing data.");
         }
 
         void OnMessage(SKSE::MessagingInterface::Message* message)

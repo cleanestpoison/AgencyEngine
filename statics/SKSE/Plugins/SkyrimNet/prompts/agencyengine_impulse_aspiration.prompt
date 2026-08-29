@@ -73,6 +73,8 @@ standing with each other is background here, and what they would enjoy doing is 
   the events below. See the rule about reacting.
 - An appetite, a comfort, or wanting somebody's company is not an aspiration, however real it is. That is the
   activity turn's material and taking it here is the same failure as inventing one.
+- A bond, a boundary, or liking or disliking something {{ player.name }} does is standing, not an aspiration. It may
+  explain the companion's priorities but cannot supply the agenda for this turn.
 {% endblock %}
 
 {% block lens_user_question %}
