@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(AgencyEngine VERSION 0.8.0 LANGUAGES CXX)
+project(AgencyEngine VERSION 0.9.0 LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
 # Output folder (mod-manager staging)
