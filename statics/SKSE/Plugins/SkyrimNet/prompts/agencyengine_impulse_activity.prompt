@@ -1,115 +1,61 @@
 {% extends "agencyengine_impulse_base.prompt" %}
 {# ==========================================================================
-   Activity lens — "is there something they want to do with these people?"
+   Activity lens — "does a companion want a voluntary shared experience with
+   somebody present?"
 
-   Daily life: appetites, downtime, invitation. A drink, a round of sparring,
-   a game or a wager, a story by the fire, restlessness for a fight, an outing
-   that serves no purpose, closeness where the standing supports it.
+   This lens produces PROPOSALS rather than TOPICS. Agreement alone does not
+   meet a proposal; the requested experience must occur. That lifecycle comes
+   from the `proposal` flag on the lens's Settings row, not this editable file
+   name. See docs/adr/0001.
 
-   This is the only lens that produces PROPOSALS rather than TOPICS, and the
-   difference is not cosmetic. A topic is met when someone answers it —
-   agreeing, refusing, arguing it out. A proposal is not met by agreement:
-   "yes, let's spar" followed by no sparring is a deferral, and the mod's own
-   resolution rules already say a deferral is not an answer. So she keeps
-   carrying it and raises it again, which is the only thing that makes a
-   proposal land at all. That behaviour comes from the `proposal` flag on this
-   lens's row on the Settings page — NOT from this file's name, which is a
-   label the user can edit. See docs/adr/0001.
+   The state chooses the subject, target and register. The prompt supplies only
+   the boundary: the experience or company is its own payoff, rather than a
+   means to complete an errand, obligation or relationship reckoning.
 
-   The vocabulary here is closed: a companion has perhaps ten activity
-   subjects in her life, against unlimited unique topics. That is why this
-   lens's row ships with three ledger slots rather than the shared six — six
-   would hold her whole repertoire and veto her into silence. Three gives a
-   four-proposal rotation, so a drink comes back around after three other
-   proposals instead of being spent forever on first use.
-
-   Expect this to be the loudest shipped lens — daily life happens every day,
-   where an ignored aspiration has to accumulate first. That is intended, and
-   it is also why this lens ships with the roster's longest cooldown: two
-   in-game days of silence once a proposal is carried. A lens
-   that speaks on most asks is a nag, and the correction is the interval and
-   the cooldown on the Lenses tab, not this file.
-
-   Overrides prose only. The JSON contract, the constraints, the state dump
-   and the forced-turn machinery are all in the base.
+   Overrides prose only. The JSON contract, constraints, state dump and
+   forced-turn machinery remain in the base.
    ========================================================================== #}
 
 {% block lens_task %}
-You decide whether one of {{ player.name }}'s companions has something **they want to do with the people they are
-travelling with** that they would ask for unprompted, right now — and if so, you write the stage direction that
-makes them ask.
+You decide whether one of {{ player.name }}'s companions wants to propose a **voluntary shared experience with
+somebody present** that they would raise unprompted right now — and if so, you write the stage direction that makes
+them ask.
 
-This turn is about ordinary life, not agendas and not grievances. Somebody wants a drink, a fight, a game, an hour
-of somebody's company — and asks. It is an opening, not a plan: something the other person can wave off without a
-scene.
+The experience or company is its own payoff, not a means to complete an errand, fulfil an obligation, advance an
+agenda or reckon with a relationship. The state chooses the specific subject, target and register.
 {% endblock %}
 
 {% block lens_when_to_speak %}
-- **An appetite.** Something they want in the plain sense — a drink, a proper meal, a bath, a night not spent
-  walking. Said out loud because they have wanted it for a while and are done not mentioning it.
-- **Downtime with somebody in it.** Sparring, a game, a wager, a competition, a story told by the fire, teaching
-  somebody a thing they know. The point is who it is with; alone it is not this.
-- **An invitation for its own sake.** They ask for somebody's company with no errand attached — sit with me, come
-  along, walk with me a while. The smallest item here and one of the truest.
-- **Restlessness.** They have been on the road too long without a fight, or too long in one, and they say so —
-  asking whether there is anything nearby worth clearing out. **Name the appetite, never a place.**
-- **An outing with no purpose.** A market, an evening somewhere, a thing they have never seen. Not a quest and not
-  a route: a want.
-- **Closeness, where the standing already supports it.** Only when the standing section below shows the two of them
-  are somewhere near it — and then as an *invitation*, at the smallest version of itself, phrased so it can be
-  turned down without either of them losing anything. Never a first move, never invented on top of a neutral
-  standing, and never written past the asking. If the standing does not evidence it, this item is not available and
-  the rest of the list is.
-- **Relationships boundaries are exact.** Personal likes can guide which invitation fits but are not rules imposed
-  on {{ player.name }}. Romantic commitment and physical availability are separate: current physical availability
-  may license a physical invitation without romance, but never compels one. Present or permanent unavailability
-  prohibits it, and a fixed personal limit overrides every other licence.
+- **One voluntary shared experience.** The state supports this companion wanting it with the person they target,
+  and wanting it enough to ask now.
 
-**Who they ask matters.** A proposal aimed at another companion is wanted exactly as much as one aimed at
-{{ player.name }} — a party whose whole life routes through the player is not a party. Aim it at whoever the
-material actually points at.
+The proposal remains optional and easy to decline. It is an opening, not an arrangement: do not schedule it,
+prescribe conditions, assume agreement or narrate what follows.
 
-**It is an opening, not an arrangement.** They are asking, not scheduling: no times, no conditions, no plan for the
-evening. The other person's answer is not yours to write, and neither is what happens if they say yes.
+Aim it at whoever the evidence supports. Another companion is as valid a target as {{ player.name }}.
 {% endblock %}
 
 {% block lens_examples %}
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a drink", "why_now": "the events pass a third town today without anyone sitting down", "narration": "Three towns since anyone sat down for an hour and Lydia has been counting them. She asks whether they are stopping long enough tonight for a drink, and makes it easy to say no to."}{% endraw %}
-{% raw %}>{"speaker": "Kaidan", "target": "Serana", "topic": "sparring", "why_now": "his stamped thought after this morning's fight, watching how she moves", "narration": "Kaidan has watched Serana fight for a week and has been wondering how he would do against her. There is light left, and he asks her for a round before it goes."}{% endraw %}
-{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "something to fight", "why_now": "no combat in the stamped events since the pass, four days back", "narration": "Four days of walking and nothing has come at them since the pass, and Serana has been getting worse company for it. She asks whether there is anything nearby worth going out of their way to kill."}{% endraw %}
+No subject examples are supplied. Choose the shared experience from the state rather than completing a pattern.
 
-Wrong turn for this lens, however good it is:
-{% raw %}>{"speaker": "Serana", "target": "Dragonborn", "topic": "the moth priest", "why_now": "the events show a fourth straight day of travel toward the Greybeards, away from the moth priest", "narration": "Four days of walking toward the Greybeards and not toward the moth priest, and Harkon reads his scroll a little sooner on each of them. She opens by asking them what the order of this is meant to be."}{% endraw %}
-                          (real, but it is an agenda being walked past — that is the aspiration turn, not this one)
-{% raw %}>{"speaker": "Serana", "target": "Kaidan", "topic": "his grandstanding", "why_now": "today's stamped event: Kaidan took the front a third time, unasked", "narration": "Kaidan has taken the front three times running and Serana has decided he is doing it to be seen doing it. She opens by asking him who he thinks is watching."}{% endraw %}
-                          (standing between two people — that is the relationship turn)
-
-Wrong in this lens's own register:
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a drink", "why_now": "the events pass a third town today without anyone sitting down", "narration": "Lydia suggests they stop at the Bannered Mare in Whiterun tonight, two hours down the road, and drink until the place closes."}{% endraw %}
-                          (names a place and a route — she asks for the drink, never for where. The party acts on what you write)
-{% raw %}>{"speaker": "Kaidan", "target": "Serana", "topic": "sparring", "why_now": "his stamped thought after this morning's fight, watching how she moves", "narration": "Kaidan proposes they spar at first light, best of three falls, and that the loser carries the packs."}{% endraw %}
-                          (an arrangement, not an opening — he is scheduling an event she has not agreed to)
+The stage direction carries **one** proposal at its smallest honest version. It does not write the request's words,
+schedule the experience, assume the answer or stage what happens next.
 {% endblock %}
 
 {% block lens_focus %}
-The agenda for this turn is **what each companion would want to do with the people in front of them** — read the
-hour and the place at the top of the state first, then their personality and thoughts for what kind of appetite is
-theirs, and the standing section for who they would ask and how far an invitation can go. What they are trying to
-accomplish is background here, not the subject.
+Read the hour and place, then each companion's personality, thoughts and standing to decide what they want, whom
+they would ask and what register the relationship supports. Their current objectives are context, not this turn's
+agenda.
 {% endblock %}
 
 {% block lens_subject_source %}
-- The subject must be something the speaker would want to **do**, with the people named below, given the hour and
-  where they stand with each other. It comes from their own appetites, habits and history — not from an errand, not
-  from a quest, and not from the scenery.
-- **Name what they want, never where to go.** "Somewhere to sit and drink" is theirs; a named inn is geography, and
-  the party will go looking for whatever you write. Recalled world knowledge is not evidence — see above.
-- Closeness is available only where the standing section evidences it, and only as an invitation. Nothing here is
-  ever written past the asking.
+- The state must support the speaker wanting the specific experience and choosing the named target.
+- The subject is not a current undertaking, errand, obligation, agenda decision or relationship reckoning.
+- Name the experience, never a location recalled from world knowledge. Carry only the opening; no dialogue,
+  schedule, conditions, assumed answer or outcome.
 {% endblock %}
 
 {% block lens_user_question %}
-Does one of the companions above want to do something with the people they are travelling with — a drink, a round,
-a game, a fight, an hour of somebody's company — enough to ask for it right now, unprompted, without it coming out
-of the last few minutes?
+Does one of the companions above want a voluntary shared experience with somebody present enough to propose it
+right now, unprompted?
 {% endblock %}

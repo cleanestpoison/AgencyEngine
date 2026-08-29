@@ -39,7 +39,6 @@ namespace AgencyEngine::MCM
             { "generateThought", &Settings::generateThought },
             { "requireFollower", &Settings::requireFollower },
             { "skipInCombat", &Settings::skipInCombat },
-            { "pendingBioInjection", &Settings::pendingBioInjection },
             { "ledgerEnabled", &Settings::ledgerEnabled },
             { "ledgerVeto", &Settings::ledgerVeto },
             { "combatContinuousMode", &Settings::combatContinuousMode },
@@ -461,9 +460,6 @@ namespace AgencyEngine::MCM
                                    entriesClassified, zeroCallRaises, staleResults, queueOverflow,
                                    evidenceWatermark, pollBaseline ? "baseline ready" : "baseline pending",
                                    pollMilliseconds, pollTailEvents, pollRecoveredEvents, pollFailures);
-            if (!settings.pendingBioInjection) {
-                summary += " Holding new impulses in character bios is disabled.";
-            }
 
             std::scoped_lock lock{ g_viewLock };
             g_pendingSummary = std::move(summary);

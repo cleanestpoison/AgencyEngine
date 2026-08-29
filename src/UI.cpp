@@ -226,18 +226,16 @@ namespace AgencyEngine::UI
             // A count only. The list, and everything you can do to it, is its
             // own page — same arrangement as the per-lens tallies, which moved
             // next to the cadence they are evidence for.
-            if (settings.pendingBioInjection) {
-                ImGui::SeparatorText("Carried, unsaid");
-                if (state.pendingImpulses.empty()) {
-                    ImGui::TextDisabled("%s", "Nobody is carrying anything.");
-                } else {
-                    // Impulses, not companions: one companion can be carrying
-                    // one from each lens, and the number people watch while
-                    // tuning is how many subjects are open at once.
-                    ImGui::Text("%d impulse(s) open across the party.",
-                                static_cast<int>(state.pendingImpulses.size()));
-                    ImGui::TextDisabled("%s", "The list is on the 'Carried' page.");
-                }
+            ImGui::SeparatorText("Carried, unsaid");
+            if (state.pendingImpulses.empty()) {
+                ImGui::TextDisabled("%s", "Nobody is carrying anything.");
+            } else {
+                // Impulses, not companions: one companion can be carrying
+                // one from each lens, and the number people watch while
+                // tuning is how many subjects are open at once.
+                ImGui::Text("%d impulse(s) open across the party.",
+                            static_cast<int>(state.pendingImpulses.size()));
+                ImGui::TextDisabled("%s", "The list is on the 'Carried' page.");
             }
 
             // The vanilla-dialogue hold is not subject to either switch, so the
@@ -299,16 +297,15 @@ namespace AgencyEngine::UI
             dirty |= ImGui::Checkbox("Only when a follower is present", &s.requireFollower);
             HelpMarker("This mod is about companions. With nobody following, there is nobody to speak up.");
 
-            dirty |= ImGui::SliderInt("Force someone to speak (% of asks, default 20)", &s.forcedImpulseChance, 0,
+            dirty |= ImGui::SliderInt("Force someone to speak (% of asks, default 0)", &s.forcedImpulseChance, 0,
                                       100);
-            HelpMarker("On a forced ask the prompt loses the silence option entirely and someone has to\n"
-                       "speak up. The rest of the time the model may return silence, and normally will.\n"
-                       "Applies to every lens, and is rolled per ask - so several lenses coming due together\n"
-                       "roll it several times.\n"
-                       "Never forced while the party is mid-exchange - forcing a turn into a live scene is\n"
-                       "where this prompt writes its worst output.");
+            HelpMarker("The shipped 0% default keeps the silence response available on every ask.\n"
+                       "Above 0, a forced ask loses that option and someone has to speak. The setting applies\n"
+                       "to every lens and is rolled per ask, so several lenses due together roll separately.\n"
+                       "Forcing is suppressed while the party is mid-exchange, where removing silence would\n"
+                       "produce the weakest result.");
             if (s.forcedImpulseChance <= 0) {
-                ImGui::TextDisabled("%s", "Never forced - purely the model's judgement, and the quietest setting.");
+                ImGui::TextDisabled("%s", "Shipped default - every ask may remain silent.");
             } else if (s.forcedImpulseChance >= 100) {
                 ImGui::TextColored(kWarn, "%s",
                                    "Every ask speaks - and it shows. A forced impulse on a thin day is the "
@@ -318,23 +315,14 @@ namespace AgencyEngine::UI
                  "it is all quiet, lower it if the companions start sounding scheduled.");
 
             dirty |= ImGui::Checkbox("Also generate a private thought (second LLM call)", &s.generateThought);
-            HelpMarker("After an impulse is delivered, asks the speaker to think privately about what they\n"
-                       "just raised. Costs a second LLM call, and is what lets the next impulse know this\n"
-                       "one happened. Skipped when SkyrimNet's own thought cooldown is active.");
+            HelpMarker("After an impulse is carried, asks the speaker to think privately about what they\n"
+                       "just decided to raise. Costs a second LLM call, and is what lets the next impulse know\n"
+                       "this one happened. Skipped when SkyrimNet's own thought cooldown is active.");
 
             ImGui::SeparatorText("What she goes on carrying");
-            dirty |= ImGui::Checkbox("Hold the impulse in her character bio", &s.pendingBioInjection);
-            HelpMarker("This is how an impulse is delivered. It is held by AgencyEngine and written into her\n"
-                       "own prompt word for word, and into nobody else's - so it is there to colour what she\n"
-                       "says without any LLM call to deliver it, and the cue on the Speaking up tab only has\n"
-                       "to announce that there is something there.\n"
-                       "Off falls back to asking SkyrimNet to generate a thought from it instead, which costs\n"
-                       "a call, paraphrases the text, and leaves nothing for a cue to be about - so no cue is\n"
-                       "sent either. Kept as an A/B against the carried version.");
-            Note("One impulse per companion per lens, so she can be carrying an aspiration and a proposal at "
-                 "once. Her bio renders them newest first.");
+            Note("Every accepted impulse is held verbatim in its speaker's private character bio. One impulse "
+                 "per companion per lens means an aspiration and a proposal can coexist, newest first.");
 
-            ImGui::BeginDisabled(!s.pendingBioInjection);
             dirty |= ImGui::SliderFloat("Forget it after (in-game minutes, default 720)", &s.pendingTtlGameMinutes,
                                         30.0f, 4320.0f, "%.0f");
             HelpMarker("Something she has been meaning to raise half an in-game day after deciding to is not\n"
@@ -350,7 +338,6 @@ namespace AgencyEngine::UI
                                         &s.pendingResolveCooldownSeconds, 60.0f, 900.0f, "%.0f");
             HelpMarker("Both the event interval and this global real-time cooldown must pass before an automatic "
                        "paid batch. Manual checks bypass both gates.");
-            ImGui::EndDisabled();
 
             ImGui::SeparatorText("Already raised");
             dirty |= ImGui::Checkbox("Remember what each companion has raised", &s.ledgerEnabled);
@@ -766,8 +753,10 @@ namespace AgencyEngine::UI
 
         void RenderContextTab(Settings& s, bool& dirty)
         {
-            dirty |= ImGui::SliderInt("Player events (default 40)", &s.maxEvents, 5, 200);
-            HelpMarker("How many of SkyrimNet's recent events for the player are fed to the prompt.");
+            dirty |= ImGui::SliderInt("Player events (default 70)", &s.maxEvents, 5, 200);
+            HelpMarker("Maximum recent SkyrimNet events requested for the player before existing filters and\n"
+                       "per-follower limits apply. The shipped 70-event window retains more evidence; lower it\n"
+                       "to reduce prompt context and cost.");
             dirty |= ImGui::SliderInt("Thoughts per follower (default 10)", &s.perFollowerEvents, 0, 120);
             HelpMarker("A per-follower recent-event tail, on top of the player's.\n"
                        "The prompt renders only the events carrying a thought and drops the rest, so\n"
@@ -1073,14 +1062,6 @@ namespace AgencyEngine::UI
                 (entry.state == PendingImpulses::LifecycleState::RaisedUnmet ? said : carried) += 1;
             }
 
-            if (!settings.pendingBioInjection) {
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextColored(kWarn, "%s",
-                                   "'Hold the impulse in her character bio' is off, so nothing new will be "
-                                   "carried and no cue will be sent. Anything already open is still tracked "
-                                   "below, and so is the ledger.");
-                ImGui::PopTextWrapPos();
-            }
 
             ImGui::SeparatorText("Resolution scheduler");
             ImGui::Text("%zu evidence | %zu eligible | %s", queuedEvidence, eligibleEntries,

@@ -1,94 +1,77 @@
 {% extends "agencyengine_impulse_base.prompt" %}
 {# ==========================================================================
-   Relationship lens — "is anything unsaid between these people?"
+   Relationship lens — "is anything presently relevant in how one companion
+   relates to somebody present?"
 
-   This turn is about standing: what one companion has come to think of
-   another, or of {{ player.name }}, and has been carrying without saying.
-   Wants and plans belong to the aspiration lens. If the only thing here is
-   that Lydia wants a bed, that is a different turn's question and this one
-   should return silence.
+   The state chooses the subject and register. This lens owns interpersonal
+   standing that the speaker would raise now; plans, shared experiences and
+   player-directed information gaps belong to their own lenses.
 
    Player standing is optional and has one authority per actor. An enrolled
    SkyrimNet Relationships actor uses its bond and preference state; otherwise
    the base uses SeverActions, with DLL stand-ins keeping either absence
    parse-safe. Companion-to-companion standing remains SeverActions' domain.
 
-   Expect this lens to be quieter than the aspiration one, and expect that to
-   be honest rather than broken. Standing is steady-state — the blurbs carry
-   no timestamp and no delta, so this turn can only fire when something in the
-   thoughts or the recent events supplies a "why now" on top of them. If the
-   per-lens counter on the Status page shows it almost never speaks, that is
-   the argument for tracked threads (tier 2), not for loosening this file.
+   Standing is undated steady state. A stamped thought or event must supply
+   why this matter surfaces now rather than merely restating what is always
+   true between the people.
 
-   Overrides prose only. The JSON contract, the constraints, the state dump
-   and the forced-turn machinery are all in the base.
+   Overrides prose only. The JSON contract, constraints, state dump and
+   forced-turn machinery remain in the base.
+   Shared evidence, timing, speaker/target and final-checklist contracts render
+   unconditionally in the base; this file defines every required semantic block.
+
    ========================================================================== #}
 
 {% block lens_task %}
-You decide whether one of {{ player.name }}'s companions has something **about one of the people they travel with**
-that they would raise unprompted, right now — and if so, you write the stage direction that makes them raise it.
+You decide whether one of {{ player.name }}'s companions has something **presently relevant in how they relate to a
+person present** that they would raise unprompted right now — and if so, you write the stage direction that makes
+them raise it.
 
-This turn is about standing, not plans. Someone has been carrying something about somebody in this party, and today
-is the day they start saying it — the start of it, not the whole of it.
+The state chooses the specific subject and register. This turn is about their interpersonal standing, not a plan,
+shared activity or information needed for another purpose.
 {% endblock %}
 
 {% block lens_when_to_speak %}
-- **Something withheld that stops being withholdable.** Fondness or resentment, gratitude or suspicion, an old wound.
-  The register is theirs; what makes it an impulse is that keeping it to themselves stopped working today.
-- **A line has been crossed.** Someone did something to them, or in front of them, that they have been carrying
-  since. It surfaces now because carrying it stopped working.
-- **Something unsaid between two companions.** One of them has come to a settled view of the other — resentment,
-  respect, suspicion, an old debt. Rare, and worth watching for, because it needs no involvement from
-  {{ player.name }} at all and nothing else in this world can produce it.
-- **Something admitted.** They say a true thing about themselves that nobody asked for — because of who they are
-  saying it to, and because they have decided that person should hear it from them.
-- **Trust named out loud.** They have been relying on someone, or refusing to, and have never said which. They say
-  it now rather than let the other work it out alone.
-- **Curiosity about another companion.** They have been wondering about one of the other companions — their
-  reasons, history, or why they do a particular thing — and ask them directly. Player-directed curiosity belongs
-  to the Curiosity lens only when understanding the player is the payoff. A settled view or grievance stays here;
-  an answer needed for action or an agenda stays with Aspiration.
+- **One interpersonal matter the speaker would raise now.** The state supports both how this companion relates to
+  the named person and why that standing becomes worth voicing now.
 
-**Who it is aimed at does not set its rank.** A settled view aimed at {{ player.name }} is wanted exactly as much as
-one aimed at another companion. The order above ranks how well a thing is evidenced, not who it points at — and with
-{{ player.name }} the party has usually accumulated the most history, so they are the most likely target, not the least.
+An observed action can support mentioning the action, but does not establish what the actor intended or how the
+speaker interpreted it. Attribute a motive or interpersonal meaning only when the speaker's standing, thoughts,
+memories or stamped events supply that interpretation.
 
-**Where the "why now" comes from.** The standing section below is an undated summary: it tells you *what* is between
-two people and never *why today*. The timing has to come from the stamped material — a thought they had and said
-nothing about, a moment the conversation moved past before they were done with it, a repetition the events show
-accumulating. A settled view with no timing attached is a fact about a relationship rather than an impulse; treat it
-as the weakest item on this list, never the strongest.
+Aim it at whoever the evidence supports. Another companion is as valid a target as {{ player.name }}.
 
-**How external bond state may be used.** A preference becomes relationship material only when stamped evidence
-shows {{ player.name }} doing the liked or disliked thing; the preference alone is merely standing. Treat the bond's
-spark, stance and progression as read-only facts. Never reopen a declined romantic question, assume mutuality from
-an unanswered one, or write the transition that the relationship system owns.
+The standing section is an undated summary: it can establish what exists between two people, never why today. Cite
+stamped material for the timing. Without that timing, the standing is context rather than an impulse.
+
+A preference becomes relationship material only when stamped evidence shows {{ player.name }} doing the relevant
+thing and the speaker's state supports the meaning they assign it. Treat external spark, stance and progression as
+read-only facts. Never reopen a declined romantic question, assume mutuality from an unanswered one, or write a
+transition that the relationship system owns.
 {% endblock %}
 
 {% block lens_examples %}
-{% raw %}>{"speaker": "Serana", "target": "Kaidan", "topic": "his grandstanding", "why_now": "today's stamped event: Kaidan took the front a third time, unasked", "narration": "Kaidan has taken the front three times running without being asked, and Serana has decided he is doing it to be seen doing it. She opens by asking him who he thinks is watching."}{% endraw %}
-{% raw %}>{"speaker": "Kaidan", "target": "Lydia", "topic": "why he trusts her", "why_now": "his stamped thought on last night's watch that she has never heard it from him", "narration": "Kaidan has been letting Lydia hold the front for a week and has never told her why he trusts her there. He would rather she heard it from him than worked it out alone, and he starts with the smallest true part of it."}{% endraw %}
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "the given-away rewards", "why_now": "the stamped event of the third reward handed away, this afternoon", "narration": "Lydia has watched them hand away the last three rewards without being asked and has stopped reading it as carelessness. She wants them to know she noticed, and she is not sure yet whether she is saying it as praise."}{% endraw %}
+No subject or attitude examples are supplied. Choose the interpersonal matter and register from the speaker's state
+rather than completing a pattern.
 
-Wrong turn for this lens, however good it is:
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a bed", "why_now": "her stamped thought two nights ago about the cold ground", "narration": "Lydia has not slept indoors in eleven days and has stopped pretending she does not mind. She wants a bed tonight."}{% endraw %}
-                          (real, but it is a want with an object — that is the aspiration turn, not this one)
+The stage direction carries **one** matter at its smallest honest opening. It does not write the speaker's words,
+prejudge the other person's answer, settle the relationship or stage the exchange.
+{% endblock %}
 
-Right subject, no timing — the weakest thing you could return:
-{% raw %}>{"speaker": "Serana", "target": "Kaidan", "topic": "trusting Kaidan", "why_now": "she has never entirely trusted him", "narration": "Serana has never entirely trusted Kaidan."}{% endraw %}
-                          (that is her standing with him, which is always true; a why_now that restates the standing
-                          cites nothing — it has to name a stamped thought or event)
+{% block lens_subject_source %}
+- The subject and register must come from the speaker's evidenced standing, personality, thoughts, memories or
+  stamped events concerning the named person.
+- A plan, shared experience or player-directed information gap is not Relationship material. Leave it to the lens
+  whose payoff it serves.
 {% endblock %}
 
 {% block lens_focus %}
-The agenda for this turn is **where each companion stands with the people they travel with — {{ player.name }}
-included** — so read the standing section for each of them first, then read their stamped thoughts and events for
-the thing that makes one of those standings surface today. What they are trying to do is background here, not the
-subject.
+Read each companion's standing with the people present, then their personality, thoughts, memories and stamped
+events for the subject, register and timing. Current objectives are context, not this turn's agenda.
 {% endblock %}
 
 {% block lens_user_question %}
-Does one of the companions above have something about one of the people they travel with — a settled view they have
-been carrying, a line that was crossed, something they have decided the other should hear from them — that they
-would raise right now, unprompted, and that did not come from the last few minutes?
+Does one of the companions above have something presently relevant in how they relate to a person present that they
+would raise right now, unprompted?
 {% endblock %}

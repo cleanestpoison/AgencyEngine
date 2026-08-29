@@ -21,11 +21,12 @@ works at the level of the whole playthrough rather than the party.
 Each **lens** asks on its own in-game clock (Aspiration every 2 game hours, Relationship every 6, Activity every 4,
 Curiosity every 6), whenever a follower is present and you're not in combat:
 
-1. Pull the recent SkyrimNet event tail for the player and for each follower.
+1. Pull the recent SkyrimNet event tail for the player and each follower. The shipped player-event budget is 70;
+   existing filters and per-follower limits still decide what renders.
 2. Render that lens's prompt against the state and send it to the configured LLM. Four ship: *Aspiration* ("is
-   anyone's agenda being ignored?"), *Relationship* ("is anything unsaid between these people?"), *Activity*
-   ("is there something they want to do with these people?") and *Curiosity* ("does a companion have a genuine
-   unanswered question about the player?").
+   anyone's agenda being ignored?"), *Relationship* ("is something presently relevant in how a companion relates
+   to somebody present?"), *Activity* ("does somebody want a voluntary shared experience?") and *Curiosity* ("does
+   a companion have a genuine unanswered question about the player?").
 3. Read back a decision — `{"speaker", "target", "narration"}`, or `{"speaker": null}` for nobody.
 4. On a decision to speak, resolve the named speaker and target against the party and **carry** the stage direction:
    it is held in the DLL and rendered into that companion's own character bio, verbatim, privately, with no LLM
@@ -49,9 +50,9 @@ globally rate-limited to one every four real minutes, and every independently du
 request. Manual checks bypass both gates, while a proposal retains one pre-expiry fallback. Per-entry watermarks
 prevent success, failure, malformed output, or reload from paying twice for the same evidence.
 
-**Most asks produce silence, by design.** A companion who demands something every two hours is a nag; one who does
-it twice in a night is a person. The Lenses tab counts carried and quiet asks separately, per lens, so you can see
-the ratio.
+**Most asks produce silence, by design.** The shipped forcing chance is `0`, so every default ask keeps silence
+available. A companion who demands something every two hours is a nag; one who does it twice in a night is a person.
+The Lenses tab counts carried and quiet asks separately, per lens, so you can see the ratio.
 
 An ask that *does* land costs its lens a **cooldown** on top of its interval — 8 game hours for Aspiration, 24 for
 Relationship and Curiosity, 48 for Activity — measured from the moment the impulse is recorded rather than from her
@@ -323,17 +324,19 @@ when that kind isn't there.
 
 | Lens | Asks | Produces | Cadence (game hours) | Needs |
 |------|------|----------|----------------------|-------|
-| Aspiration | Is anyone's agenda being ignored? An aspiration walked past, an errand stuck, an order of operations she disagrees with. | Topics | every 2, then quiet for 8 | — |
-| Relationship | Is anything unsaid between these people? A settled view one companion has been carrying about another. | Topics | every 6, then quiet for 24 | SeverActions, optional |
-| Activity | Is there something they want to *do* with these people? A drink, a round of sparring, a game, restlessness for a fight, an hour of somebody's company. | Proposals | every 4, then quiet for 48 | — |
+| Aspiration | Is anyone's agenda being ignored? Something the companion is trying to accomplish that the party keeps walking away from. | Topics | every 2, then quiet for 8 | — |
+| Relationship | Is something presently relevant in how a companion relates to somebody present? The state chooses the subject and register. | Topics | every 6, then quiet for 24 | SeverActions, optional |
+| Activity | Does a companion want a voluntary shared experience with somebody present, where the experience or company is its own payoff? | Proposals | every 4, then quiet for 48 | — |
 | Curiosity | Does a companion have a genuine unanswered question about the player? One information gap, with understanding the player as the payoff. | Topics | every 6, then quiet for 24 | — |
 
 Aspiration is the workhorse and asks often. Relationship's material accumulates over in-game days, while Curiosity
-waits for a genuine unknown and a moment when asking fits; both use the slower 6/24 cadence. Activity's danger is
-repeat-proposing — "spar with me" again tonight — so it takes the longest cooldown.
+waits for a genuine unknown and a moment when asking fits; both use the slower 6/24 cadence. Activity takes the
+longest cooldown because an unmet proposal remains open until the shared experience occurs.
 
-Aspiration deliberately does **not** own mundane appetites — rest, food, a bed, a drink. Those are Activity's, and
-leaving them in both would split one register across two names instead of asking two questions.
+The shipped Activity and Relationship prompts define semantic boundaries, not subject catalogs. Supplied state must
+support the subject, emotional register and every motive attributed to another person. An observed action can be
+mentioned, but does not by itself establish why it happened or how the prospective speaker interprets it. Evidence
+may support warmth, neutrality or sharpness; the prompts enforce none of them as a default register.
 
 ### Every cadence is in game time, so your timescale sets the bill
 
@@ -369,16 +372,16 @@ deleted outright comes back switched off rather than running.
 
 Lenses you write yourself are a separate list and are stored whole — see *Writing your own lens* below.
 
-They share a spine. `agencyengine_impulse_base.prompt` owns the JSON contract, the hard constraints, the state dump
-and the forced-turn machinery; each lens `{% extends %}`es it and may override ten prose blocks (`lens_task`,
-`lens_why_now`, `lens_speaker_target`, `lens_when_to_speak`, `lens_examples`, `lens_subject_source`,
-`lens_player_context`, `lens_focus`, `lens_evidence_check`, `lens_user_question`). Fixing a shared constraint means
-editing one file, and the lenses can't drift apart on the output format.
+They share a spine. `agencyengine_impulse_base.prompt` owns the JSON contract, hard constraints, state dump,
+forced-turn machinery, speaker/target eligibility, timing floor and final evidence door as ordinary base text.
+Required shared contracts never live in block defaults: SkyrimNet's Inja renderer does not reliably emit an
+unoverridden base block body from an extending template.
 
-No block sits inside an `{% if %}` or a `{% for %}`, and no lens reads a variable the base sets. Blocks nested in
-control flow and cross-template variable scope are the two parts of Inja inheritance that weren't worth betting an
-impulse on — a render error costs the whole call and fails as a blank prompt rather than as anything you'd notice.
-All branching is base-owned; lenses supply prose.
+Every lens therefore defines its six required semantic blocks explicitly (`lens_task`, `lens_when_to_speak`,
+`lens_examples`, `lens_subject_source`, `lens_focus`, `lens_user_question`). Three optional additive hooks have empty
+base bodies: `lens_why_now_exception`, `lens_target_narrowing`, and `lens_player_context`. Curiosity uses the first
+two to permit a truthful current-state opportunity and to restrict its target to the player. All blocks remain top
+level and unconditional, no lens reads a variable the base sets, and all branching remains base-owned.
 
 **Cadence is in the DLL, not the template, and there is no selection left to make.** Each lens holds a game-time
 deadline; a pass of the Director checks the clocks and asks whatever is due, which is usually nothing. Two
@@ -457,22 +460,21 @@ The prompts are normal SkyrimNet Inja templates split into `[ system ]` / `[ use
 rebuilding redeploys it without touching the DLL.
 
 The one knob that changes how often companions speak is **Force someone to speak** on the Impulses tab, and it
-applies to every lens. It is a percent chance that the turn is *forced*: the silence option is removed from the
-template entirely and someone has to speak up. The rest of the time the model may return silence, and normally will.
-`0` disables forcing; `100` makes every turn speak, which shows — a forced impulse on a thin day is the weakest thing
-the prompt writes.
+applies to every lens. It is a percent chance that an ask is *forced*: the silence option is removed and someone has
+to speak. The shipped default is `0`, so silence remains available on every ask. `100` makes every ask speak, which
+shows — a forced impulse on a thin day is the weakest thing the prompt writes.
 
-The DLL sends the number into the template as `forced_impulse_chance` and the roll stays there, next to the
-`tail_live` half of the condition that suppresses it. `agencyengine_impulse_base.prompt` keeps a `20` fallback behind
-an `exists()` guard, for the case where the prompt file is newer than the DLL rendering it.
+The DLL sends the number into the template as `forced_impulse_chance`; the base prompt uses `0` behind an `exists()`
+guard when an older DLL does not inject it. The template evaluates the forced decision once and reuses it at every
+branch, preventing one render from offering silence in one section while forbidding it in another. Forcing is
+suppressed while the party is mid-exchange.
 
-The roll is taken **once** into `{% raw %}{% set roll = random %}{% endraw %}` and reused at every branch. `random`
-re-evaluates on each reference, so testing it directly in more than one place lets the roll disagree with itself and
-offer the silence option in one section while forbidding it in another — a bug SkyrimNet's own
-`dialogue_speaker_selector.prompt` has.
+The Lenses tab's "N carried, M quiet" counters are the readout for tuning this: raise the chance if it is all quiet,
+lower it if the companions start sounding scheduled.
 
-The Lenses tab's "N carried, M quiet" counters are the readout for tuning this: raise the chance if it is all
-quiet, lower it if the companions start sounding scheduled.
+**Player events** on the Context tab is the total recent-event request budget. It ships at `70`; filtering and the
+separate per-follower thought limit still apply before prompt rendering. The broader window retains older stamped
+evidence for subject and timing. Lower it when prompt context, latency or model cost matters more than that reach.
 
 ## Roadmap
 

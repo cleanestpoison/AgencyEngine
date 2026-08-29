@@ -88,9 +88,9 @@ Function InitializePages()
 EndFunction
 
 Function InitializeSettingTables()
-	_boolKeys = New String[13]
-	_boolOids = New Int[13]
-	_boolDefaults = New Bool[13]
+	_boolKeys = New String[12]
+	_boolOids = New Int[12]
+	_boolDefaults = New Bool[12]
 	_boolKeys[0] = "enabled"
 	_boolDefaults[0] = True
 	_boolKeys[1] = "cues"
@@ -101,22 +101,20 @@ Function InitializeSettingTables()
 	_boolDefaults[3] = True
 	_boolKeys[4] = "skipInCombat"
 	_boolDefaults[4] = True
-	_boolKeys[5] = "pendingBioInjection"
+	_boolKeys[5] = "ledgerEnabled"
 	_boolDefaults[5] = True
-	_boolKeys[6] = "ledgerEnabled"
+	_boolKeys[6] = "ledgerVeto"
 	_boolDefaults[6] = True
-	_boolKeys[7] = "ledgerVeto"
-	_boolDefaults[7] = True
-	_boolKeys[8] = "combatContinuousMode"
-	_boolDefaults[8] = False
-	_boolKeys[9] = "deferOnConversation"
+	_boolKeys[7] = "combatContinuousMode"
+	_boolDefaults[7] = False
+	_boolKeys[8] = "deferOnConversation"
+	_boolDefaults[8] = True
+	_boolKeys[9] = "injectQuietGap"
 	_boolDefaults[9] = True
-	_boolKeys[10] = "injectQuietGap"
-	_boolDefaults[10] = True
-	_boolKeys[11] = "debugLog"
+	_boolKeys[10] = "debugLog"
+	_boolDefaults[10] = False
+	_boolKeys[11] = "combatEventsEnabled"
 	_boolDefaults[11] = False
-	_boolKeys[12] = "combatEventsEnabled"
-	_boolDefaults[12] = False
 
 	_intKeys = New String[5]
 	_intOids = New Int[5]
@@ -125,9 +123,9 @@ Function InitializeSettingTables()
 	_intDefaults = New Int[5]
 	_intSteps = New Int[5]
 	_intFormats = New String[5]
-	ConfigureInt(0, "maxEvents", 5, 200, 40, 5, "{0}")
+	ConfigureInt(0, "maxEvents", 5, 200, 70, 5, "{0}")
 	ConfigureInt(1, "perFollowerEvents", 0, 120, 10, 1, "{0}")
-	ConfigureInt(2, "forcedImpulseChance", 0, 100, 20, 1, "{0}%")
+	ConfigureInt(2, "forcedImpulseChance", 0, 100, 0, 1, "{0}%")
 	ConfigureInt(3, "ledgerSlots", 1, 20, 6, 1, "{0}")
 	ConfigureInt(4, "pendingResolveEventInterval", 1, 200, 30, 1, "{0}")
 
@@ -343,28 +341,24 @@ Function BuildImpulsesPage()
 	; aliasing the native key "enabled" in the compiled string table.
 	AddBoolSetting(0, "Master switch")
 	AddBoolSetting(3, "Only when a follower is present")
-	AddIntSetting(2, "Force someone to speak")
+	AddIntSetting(2, "Force someone to speak (default 0%)")
 	AddBoolSetting(2, "Also generate a private thought")
 
 	AddHeaderOption("What she goes on carrying")
-	AddBoolSetting(5, "Hold the impulse in her character bio")
-	Int carryFlags = OPTION_FLAG_NONE
-	If !AgencyEngine_MCMNative.GetBool("pendingBioInjection")
-		carryFlags = OPTION_FLAG_DISABLED
-	EndIf
-	AddFloatSetting(0, "Retire it after", carryFlags)
-	AddIntSetting(4, "Automatic resolve interval", carryFlags)
-	AddFloatSetting(8, "Automatic resolve cooldown", carryFlags)
+	AddTextOption("Every accepted impulse", "Carried privately")
+	AddFloatSetting(0, "Retire it after")
+	AddIntSetting(4, "Automatic resolve interval")
+	AddFloatSetting(8, "Automatic resolve cooldown")
 
 	AddHeaderOption("Already raised")
-	AddBoolSetting(6, "Remember what each companion has raised")
+	AddBoolSetting(5, "Remember what each companion has raised")
 	Int ledgerFlags = OPTION_FLAG_NONE
 	If !AgencyEngine_MCMNative.GetBool("ledgerEnabled")
 		ledgerFlags = OPTION_FLAG_DISABLED
 	EndIf
 	AddFloatSetting(1, "Recent party echo memory", ledgerFlags)
 	AddIntSetting(3, "Subjects remembered per companion", ledgerFlags)
-	AddBoolSetting(7, "Refuse an impulse that repeats one", ledgerFlags)
+	AddBoolSetting(6, "Refuse an impulse that repeats one", ledgerFlags)
 EndFunction
 
 Function BuildSpeakingPage()
@@ -375,7 +369,7 @@ Function BuildSpeakingPage()
 	If !AgencyEngine_MCMNative.GetBool("cues")
 		cueFlags = OPTION_FLAG_DISABLED
 	EndIf
-	AddBoolSetting(9, "Wait for a gap before cueing her", cueFlags)
+	AddBoolSetting(8, "Wait for a gap before cueing her", cueFlags)
 
 	Int waitFlags = cueFlags
 	If !AgencyEngine_MCMNative.GetBool("deferOnConversation")
@@ -386,7 +380,7 @@ Function BuildSpeakingPage()
 	AddFloatSetting(5, "Give up after", waitFlags)
 
 	AddHeaderOption("What the model is told")
-	AddBoolSetting(10, "Tell it how long the party has been quiet", cueFlags)
+	AddBoolSetting(9, "Tell it how long the party has been quiet", cueFlags)
 EndFunction
 
 Function BuildCombatPage()
@@ -394,7 +388,7 @@ Function BuildCombatPage()
 	AddBoolSetting(4, "Skip impulses while in combat")
 
 	AddHeaderOption("SkyrimNet combat events")
-	AddBoolSetting(12, "Emit a silent combat event stream")
+	AddBoolSetting(11, "Emit a silent combat event stream")
 	Int eventFlags = OPTION_FLAG_NONE
 	If !AgencyEngine_MCMNative.GetBool("combatEventsEnabled")
 		eventFlags = OPTION_FLAG_DISABLED
@@ -402,7 +396,7 @@ Function BuildCombatPage()
 	AddFloatSetting(7, "Ongoing event interval", eventFlags)
 
 	AddHeaderOption("Continuous mode")
-	AddBoolSetting(8, "Hold SkyrimNet continuous mode during combat")
+	AddBoolSetting(7, "Hold SkyrimNet continuous mode during combat")
 
 	Int graceFlags = OPTION_FLAG_NONE
 	If !AgencyEngine_MCMNative.GetBool("combatContinuousMode") && !AgencyEngine_MCMNative.GetBool("combatEventsEnabled")
@@ -454,7 +448,7 @@ EndFunction
 
 Function BuildContextPage()
 	AddHeaderOption("Recent context sent to the model")
-	AddIntSetting(0, "Player events")
+	AddIntSetting(0, "Player events (default 70)")
 	AddIntSetting(1, "Thoughts per follower")
 	AddStringSetting(0, "Player event type filter")
 	AddStringSetting(1, "Follower event type filter")
@@ -469,7 +463,7 @@ Function BuildDiagnosticsPage()
 	AddFloatSetting(6, "Conversation poll interval", pollFlags)
 
 	AddHeaderOption("Logging")
-	AddBoolSetting(11, "Verbose pass logging")
+	AddBoolSetting(10, "Verbose pass logging")
 
 	AddHeaderOption("Configuration file")
 	_reloadOID = AddTextOption("Reload from disk", "RELOAD")
@@ -706,7 +700,7 @@ Event OnOptionSelect(Int option)
 		If AgencyEngine_MCMNative.SetBool(_boolKeys[index], value)
 			SetToggleOptionValue(option, value)
 			PersistSettings()
-			If index == 1 || index == 5 || index == 6 || index == 8 || index == 9 || index == 10 || index == 12
+			If index == 1 || index == 5 || index == 7 || index == 8 || index == 9 || index == 11
 				ForcePageReset()
 			EndIf
 		EndIf
@@ -1042,20 +1036,18 @@ String Function BoolHelp(Int index)
 	ElseIf index == 4
 		Return "Do not ask for impulses during combat. Lens clocks continue running."
 	ElseIf index == 5
-		Return "Keep each impulse verbatim in its speaker's private character bio until it is resolved or expires."
-	ElseIf index == 6
 		Return "Remember subjects each companion already raised so prompts and the veto can prevent repetition."
-	ElseIf index == 7
+	ElseIf index == 6
 		Return "Reject a generated impulse when its subject is already in that companion's ledger. The LLM call has already been spent."
-	ElseIf index == 8
+	ElseIf index == 7
 		Return "Ask SkyrimNet to hold continuous scene mode during combat and release only the mode AgencyEngine acquired."
-	ElseIf index == 9
+	ElseIf index == 8
 		Return "Hold a cue until the current conversation has ended and the configured silence has elapsed."
-	ElseIf index == 10
+	ElseIf index == 9
 		Return "Tell the impulse prompt how long the party has been quiet so it can distinguish a pause from a dead scene."
-	ElseIf index == 11
+	ElseIf index == 10
 		Return "Log every pass plus full context and response payloads. This produces a large log."
-	ElseIf index == 12
+	ElseIf index == 11
 		Return "Emit silent agencyengine_combat lifecycle events for SkyrimNet triggers. This does not narrate or enter scene context."
 	EndIf
 	Return ""
@@ -1063,11 +1055,11 @@ EndFunction
 
 String Function IntHelp(Int index)
 	If index == 0
-		Return "Maximum recent player events included in each impulse prompt."
+		Return "Maximum recent player events requested before existing filters and per-follower limits apply. The shipped 70-event window retains more evidence; lower it to reduce prompt context and cost."
 	ElseIf index == 1
 		Return "Recent events fetched per follower. With the default filter this is effectively a thought count."
 	ElseIf index == 2
-		Return "Percent of eligible asks where the model is not allowed to answer with silence."
+		Return "The shipped 0% default keeps silence available on every ask. Above 0, this is the percent of asks where the model must choose a speaker."
 	ElseIf index == 3
 		Return "Subjects remembered per companion for lenses that use the shared slot count."
 	ElseIf index == 4

@@ -9,24 +9,29 @@
    contract, the constraints, the state dump, the forced-turn machinery —
    lives here so it cannot drift between lenses.
 
-   Blocks a lens may override, ALL of them top level and unconditional:
+   Required shared contracts are ordinary base text, never block defaults. The
+   SkyrimNet Inja renderer does not reliably emit an unoverridden base block
+   body from an extending template. Every built-in lens therefore defines its
+   required lens-specific blocks explicitly:
 
      lens_task            what this turn is looking for, 2-4 sentences
-     lens_why_now         what the required why_now may truthfully cite
-     lens_speaker_target  who may speak and who may be targeted
      lens_when_to_speak   the ordered list of what counts this turn
-     lens_examples        matched good/bad pairs in this lens's register
+     lens_examples        output-shape guidance in this lens's register
      lens_subject_source  the hard constraint naming where a subject may come from
-     lens_player_context  extra state a lens needs about the player
      lens_focus           one line naming which part of the state is the agenda
-     lens_evidence_check  the final evidence door for why_now
      lens_user_question   the question asked in the [ user ] turn
-   Deliberately, no block sits inside an `{% raw %}{% if %}{% endraw %}` or a `{% raw %}{% for %}{% endraw %}`, and no lens
-   reads a variable this file sets. Cross-template variable scope and blocks
-   nested in control flow are the two things about Inja inheritance that were
-   not worth betting an impulse on — a render error costs the whole call, and
-   it fails as a blank prompt rather than as an error anyone would notice.
-   All branching is owned here; lenses supply prose and nothing else.
+
+   Optional additive hooks have empty base bodies:
+
+     lens_why_now_exception  evidence permitted in addition to a stamped item
+     lens_target_narrowing   a stricter target rule
+     lens_player_context     extra state a lens needs about the player
+
+   All blocks remain top level and unconditional. No lens reads a variable this
+   file sets. Cross-template variable scope and blocks nested in control flow
+   are not safe seams: a render error costs the whole call and fails as a blank
+   prompt rather than as a visible error. All branching is owned here; lenses
+   supply prose and nothing else.
 
    ---------------------------------------------------------------------------
    CONFIGURATION
@@ -41,8 +46,7 @@
    and the DLL injects it into this context on every ask. Tune it there; the
    fallback below only applies when a DLL too old to send it renders this file.
 
-     0   = never force. Purely the model's judgement (quietest).
-     20  = roughly one in five turns produces an impulse no matter what.
+     0   = shipped default; never force. Purely the model's judgement (quietest).
      100 = every turn produces an impulse (loudest, and it will show — a forced
            impulse on a thin day is the weakest thing this prompt writes).
 
@@ -59,7 +63,7 @@
    silence option is gone, and the only move left is to reach for the biggest
    buried thing in the state and swing at it.
    ========================================================================== #}
-{% if not exists("forced_impulse_chance") %}{% set forced_impulse_chance = 20 %}{% endif %}
+{% if not exists("forced_impulse_chance") %}{% set forced_impulse_chance = 0 %}{% endif %}
 
 {# Rolled ONCE and reused. `random` re-evaluates on every reference, so
    testing it directly in more than one place would let the roll disagree
@@ -120,10 +124,10 @@ The word limit is part of the contract. Count before you return.
 `topic` is the subject as the two of them would name it later — "the coin split", "her father". Not a sentence,
 not a summary — the same subject always produces the same few words.
 
-{% block lens_why_now %}
-`why_now` names the one stamped thought or event in the state that makes the subject surface today — the item
-itself, not a paraphrase of the mood. An impulse that cannot fill this field is not citable and is not the impulse.
-{% endblock %}
+`why_now` truthfully names the state evidence that makes the subject surface today — the item itself, not a
+paraphrase of the mood. It cites one stamped thought or event unless this lens explicitly permits a current-state
+opportunity below. An impulse that cannot fill this field is not citable and is not the impulse.
+{% block lens_why_now_exception %}{% endblock %}
 {% if not forced %}
 When nobody has anything:
 ```
@@ -131,10 +135,9 @@ When nobody has anything:
 ```
 {% endif %}
 
-{% block lens_speaker_target %}
-`speaker` is one of the companions listed below — never {{ player.name }}; `target` is {{ player.name }} or
-another of them.
-{% endblock %}
+`speaker` is one of the companions listed below — never {{ player.name }}; `target` is {{ player.name }} or another
+listed companion.
+{% block lens_target_narrowing %}{% endblock %}
 
 # What counts this turn
 The list is ordered, most wanted first — real from further down beats strained from the top.
@@ -199,8 +202,9 @@ Bad, in every register:
 {% raw %}>{"speaker": "Dragonborn", ...}{% endraw %}                 (the player is never the speaker)
 
 # Hard constraints
-- Use only what the state below supports — no invented quests, deaths, injuries, places, relationships. A want
-  not written below does not exist.
+- Use only what the state below supports. The subject, emotional register, and every motive attributed to another
+  person each require evidence there. An observed action supports mentioning the action, not deciding why it was
+  done. No invented quests, deaths, injuries, places, relationships, or wants.
 - **Nothing you know of this world from elsewhere counts** — places, people, quests, stories. Not evidence — and
   the commonest way a false statement gets in.
 - **No geography.** No directions, distances, travel times, or what lies between here and anywhere — you know the
@@ -431,10 +435,8 @@ Check your impulse against three doors. One that fails any of them is not the im
 1. **Not the current undertaking.** Not the errand underway, the destination being walked toward, or the fight in
    progress — and not what the last few exchanges are about.
 2. **Novel.** Not on the speaker's or party's lists, even reworded.
-{% block lens_evidence_check %}
-3. **Citable.** The `why_now` you return names a stamped thought or event that is actually above — not
-   remembered, not inferred.
-{% endblock %}
+3. **Evidenced.** The state above supports the subject, emotional register and every motive attributed to another
+   person; `why_now` names evidence actually above and follows this lens's timing rule.
 [ end system ]
 
 [ user ]

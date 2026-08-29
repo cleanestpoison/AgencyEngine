@@ -21,14 +21,13 @@
   "generateThought": false,
   "requireFollower": true,
   "skipInCombat": true,
-  "forcedImpulseChance": 20,
+  "forcedImpulseChance": 0,
 
-  "maxEvents": 40,
+  "maxEvents": 70,
   "perFollowerEvents": 10,
   "eventTypeFilter": "",
   "followerEventTypeFilter": "npc_thoughts",
 
-  "pendingBioInjection": true,
   "pendingTtlGameMinutes": 720.0,
   "pendingResolveEventInterval": 30,
   "pendingResolveCooldownSeconds": 240.0,

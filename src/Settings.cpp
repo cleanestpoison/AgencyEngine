@@ -258,6 +258,8 @@ namespace AgencyEngine
                 { "degradeToPersistentEvent",
                   "a cue that runs out of time is simply dropped — the impulse reached her bio before the cue "
                   "was set, so it colours what she says either way" },
+                { "pendingBioInjection",
+                  "every accepted impulse is carried in its speaker's private character bio" },
                 { "pendingResolveGameMinutes",
                   "resolution uses accepted-event checkpoints with a real-time cost cooldown" },
                 { "pendingResolveEventCap",
@@ -319,13 +321,13 @@ namespace AgencyEngine
             "lenses=[{}] "
             "deferOnConversation={} quiet={:.0f}s settle={:.0f}s maxDefer={:.0f}s injectQuietGap={} poll={:.1f}s "
             "verboseLog={} combatEvents={} combatEventInterval={:.0f}s combatContinuousMode={} combatExitGrace={:.0f}s "
-            "pendingBioInjection={} pendingTtl={:.0f} in-game min resolveEvery={} events resolveCooldown={:.0f}s "
+            "pendingTtl={:.0f} in-game min resolveEvery={} events resolveCooldown={:.0f}s "
             "partyEcho={:.1f} game days followerEventFilter='{}' ledger={} slots={} veto={}",
             enabled, cues, generateThought, requireFollower, skipInCombat, maxEvents, perFollowerEvents,
             forcedImpulseChance, eventTypeFilter, LensSummary(), deferOnConversation, quietSeconds,
             conversationSettleSeconds, maxDeferSeconds, injectQuietGap, quietPollSeconds, debugLog,
             combatEventsEnabled, combatEventIntervalSeconds, combatContinuousMode, continuousExitGraceSeconds,
-            pendingBioInjection, pendingTtlGameMinutes, pendingResolveEventInterval,
+            pendingTtlGameMinutes, pendingResolveEventInterval,
             pendingResolveCooldownSeconds, partyEchoGameDays, followerEventTypeFilter, ledgerEnabled, ledgerSlots,
             ledgerVeto);
     }
@@ -377,7 +379,6 @@ namespace AgencyEngine
             maxDeferSeconds = j.value("maxDeferSeconds", maxDeferSeconds);
             injectQuietGap = j.value("injectQuietGap", injectQuietGap);
             quietPollSeconds = j.value("quietPollSeconds", quietPollSeconds);
-            pendingBioInjection = j.value("pendingBioInjection", pendingBioInjection);
             pendingTtlGameMinutes = j.value("pendingTtlGameMinutes", pendingTtlGameMinutes);
             pendingResolveEventInterval =
                 std::clamp(j.value("pendingResolveEventInterval", pendingResolveEventInterval), 1, 200);
@@ -463,7 +464,6 @@ namespace AgencyEngine
             put("maxDeferSeconds", maxDeferSeconds, shipped.maxDeferSeconds);
             put("injectQuietGap", injectQuietGap, shipped.injectQuietGap);
             put("quietPollSeconds", quietPollSeconds, shipped.quietPollSeconds);
-            put("pendingBioInjection", pendingBioInjection, shipped.pendingBioInjection);
             put("pendingTtlGameMinutes", pendingTtlGameMinutes, shipped.pendingTtlGameMinutes);
             put("pendingResolveEventInterval", pendingResolveEventInterval, shipped.pendingResolveEventInterval);
             put("pendingResolveCooldownSeconds", pendingResolveCooldownSeconds,

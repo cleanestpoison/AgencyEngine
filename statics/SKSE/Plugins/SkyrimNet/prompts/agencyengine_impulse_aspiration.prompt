@@ -2,19 +2,11 @@
 {# ==========================================================================
    Aspiration lens — "is anyone's agenda being ignored?"
 
-   The original single-prompt behaviour, narrowed twice. This turn is about
-   what a companion is trying to *do* and whether the party keeps walking away
-   from it. Everything interpersonal belongs to the relationship lens; if the
-   only thing here is that Serana is angry with Kaidan, that is a different
-   turn's question and this one should return silence.
-
-   The second narrowing: mundane appetites — rest, food, a bed, a drink, an
-   hour of somebody's company — are the ACTIVITY lens now, and this file no
-   longer offers them. That is not tidying. Left here they compete with the
-   activity lens for the same material, and two lenses on their own clocks
-   then split one register across two names instead of asking two questions. What is left is
-   what the name always promised: goals, a quest being walked past, an order
-   of operations she disagrees with.
+   This turn is about what a companion is trying to accomplish and whether
+   the party keeps walking away from it. Interpersonal standing belongs to
+   Relationship; a voluntary shared experience whose payoff is itself belongs
+   to Activity. Keeping those boundaries semantic prevents another lens's
+   subjects from becoming suggestions here.
 
    Overrides prose only. The JSON contract, the constraints, the state dump
    and the forced-turn machinery are all in the base.
@@ -44,9 +36,8 @@ keeps not getting to it, and they have waited long enough to say so out loud.
 - **The ground is speaking to them.** A place, a date, or an object in front of them touches something they have
   been meaning to do, hard enough to break the silence.
 
-**Not appetites, and not company.** Wanting a bed, a drink, a meal, a fight for its own sake, or an hour of
-somebody's time is a different turn's question — it is asked, and asked well, by the activity turn. If that is all
-anyone here has, this turn's answer is silence.
+**Not another lens's payoff.** A voluntary shared experience belongs to Activity; presently relevant interpersonal
+standing belongs to Relationship. If either is all anyone has, this turn's answer is silence.
 {% endblock %}
 
 {% block lens_examples %}
@@ -54,17 +45,14 @@ anyone here has, this turn's answer is silence.
 {% raw %}>{"speaker": "Kaidan", "target": "Dragonborn", "topic": "his father's sword", "why_now": "his stamped thought at the last town about walking past yet another forge", "narration": "Kaidan has been carrying his father's sword unrepaired since Ivarstead and there has been a forge in every town since. He wants to know when they are stopping long enough for him to see to it."}{% endraw %}
 {% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "Whiterun's business", "why_now": "the events turn the party away from Whiterun again this morning, a fortnight on", "narration": "Lydia was told to hold Whiterun's business in mind and it has been a fortnight of walking away from it. She asks what is supposed to be happening about it, and when."}{% endraw %}
 
-Wrong turn for this lens, however good it is:
-{% raw %}>{"speaker": "Serana", "target": "Kaidan", "topic": "his grandstanding", "why_now": "today's stamped event: Kaidan took the front a third time, unasked", "narration": "Kaidan has taken the front three times running and Serana has decided he is doing it to be seen doing it. She opens by asking him who he thinks is watching."}{% endraw %}
-                          (real, but it is standing between two people — that is the relationship turn, not this one)
-{% raw %}>{"speaker": "Lydia", "target": "Dragonborn", "topic": "a bed", "why_now": "her stamped thought two nights ago about the cold ground, and nothing said since", "narration": "Lydia has not slept indoors in eleven days and has stopped pretending she does not mind. She starts by asking whether they are stopping in town tonight."}{% endraw %}
-                          (a real want, and a good line — but it is an appetite, which is the activity turn, not this one)
+Wrong turns for this lens are subjects whose payoff is a shared experience or a change in interpersonal standing.
+Leave each to the lens that owns that boundary rather than importing its possible subjects here.
 {% endblock %}
 
 {% block lens_focus %}
-The agenda for this turn is **what each companion is trying to accomplish** — read their aspirations first, and read
-everything else to work out whether the party has been walking away from one of them and for how long. Their
-standing with each other is background here, and what they would enjoy doing is a different turn's question.
+The agenda for this turn is **what each companion is trying to accomplish** — read their aspirations first, then
+use the rest of the state to decide whether the party has been walking away from one and for how long. Interpersonal
+standing and shared experience are context, not the subject.
 {% endblock %}
 
 {% block lens_subject_source %}

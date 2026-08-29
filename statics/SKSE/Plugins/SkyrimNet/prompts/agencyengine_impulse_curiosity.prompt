@@ -24,15 +24,13 @@ it and how intimate they can honestly be. Do not assume the player has any canon
 allegiance or purpose.
 {% endblock %}
 
-{% block lens_why_now %}
-`why_now` is required and names why the companion asks now. Cite one stamped thought or event when one prompted the
-question. When none did, truthfully name the quiet or social opportunity visible in the current state; do not invent
-a trigger merely to make the question citable.
+{% block lens_why_now_exception %}
+For Curiosity only, when no stamped thought or event prompted the question, `why_now` may truthfully name the quiet
+or social opportunity visible in the current state. Never invent a trigger merely to make the question citable.
 {% endblock %}
 
-{% block lens_speaker_target %}
-`speaker` is one of the companions listed below — never {{ player.name }} — and `target` is always
-{{ player.name }}.
+{% block lens_target_narrowing %}
+For Curiosity, `target` is always {{ player.name }}.
 {% endblock %}
 
 {% block lens_when_to_speak %}
@@ -81,10 +79,6 @@ to understand**. Read the player's summary and appearance alongside each compani
 standing, thoughts and memories. Recent events may supply a trigger, but a truthful quiet opportunity is enough.
 {% endblock %}
 
-{% block lens_evidence_check %}
-3. **Truthful timing.** The `why_now` names a stamped thought or event when one prompted the question; otherwise it
-   names the quiet or social opportunity the current state actually provides. It never invents a trigger.
-{% endblock %}
 
 {% block lens_user_question %}
 Does a companion above have a genuine unanswered question about {{ player.name }} that they would raise unprompted

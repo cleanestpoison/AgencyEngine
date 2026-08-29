@@ -128,6 +128,44 @@ namespace
         CHECK(loaded.Summary() == shipped.Summary());
     }
 
+    void RetunedImpulseDefaultsAdoptAndPreserveOverrides()
+    {
+        Begin("retuned impulse defaults adopt absent keys and preserve explicit deviations");
+
+        const Settings shipped;
+        CHECK(shipped.forcedImpulseChance == 0);
+        CHECK(shipped.maxEvents == 70);
+        CHECK(shipped.Save());
+        const auto fresh = ReadConfig();
+        CHECK(fresh.find("forcedImpulseChance") == std::string::npos);
+        CHECK(fresh.find("maxEvents") == std::string::npos);
+
+        WriteConfig(R"({ "quietSeconds": 12 })");
+        Settings absent;
+        CHECK(absent.Load());
+        CHECK(absent.forcedImpulseChance == 0);
+        CHECK(absent.maxEvents == 70);
+        CHECK(absent.Save());
+        const auto adopted = ReadConfig();
+        CHECK(adopted.find("forcedImpulseChance") == std::string::npos);
+        CHECK(adopted.find("maxEvents") == std::string::npos);
+
+        WriteConfig(R"({ "forcedImpulseChance": 20, "maxEvents": 40 })");
+        Settings overridden;
+        CHECK(overridden.Load());
+        CHECK(overridden.forcedImpulseChance == 20);
+        CHECK(overridden.maxEvents == 40);
+        CHECK(overridden.Save());
+        const auto preserved = ReadConfig();
+        CHECK(preserved.find("forcedImpulseChance") != std::string::npos);
+        CHECK(preserved.find("maxEvents") != std::string::npos);
+
+        Settings reloaded;
+        CHECK(reloaded.Load());
+        CHECK(reloaded.forcedImpulseChance == 20);
+        CHECK(reloaded.maxEvents == 40);
+    }
+
     // The bug that started this: a lens added in a later version has to turn up
     // in a config that already exists.
     void ANewLensAppearsInAnExistingConfig()
@@ -236,6 +274,21 @@ namespace
         CHECK(s.Save());
         const auto text = ReadConfig();
         CHECK(text.find("intervalGameMinutes") == std::string::npos);
+        CHECK(text.find("forcedImpulseChance") != std::string::npos);
+    }
+
+    void TheRetiredBioInjectionKeyIsIgnoredAndDropped()
+    {
+        Begin("the old thought-only delivery override is ignored and never written back");
+
+        WriteConfig(R"({ "pendingBioInjection": false, "forcedImpulseChance": 40 })");
+
+        Settings s;
+        CHECK(s.Load());
+        CHECK(s.forcedImpulseChance == 40);
+        CHECK(s.Save());
+        const auto text = ReadConfig();
+        CHECK(text.find("pendingBioInjection") == std::string::npos);
         CHECK(text.find("forcedImpulseChance") != std::string::npos);
     }
 
@@ -534,9 +587,11 @@ int main()
 
     SaveWritesOnlyWhatChanged();
     AnUntouchedFileRoundTripsToTheDefaults();
+    RetunedImpulseDefaultsAdoptAndPreserveOverrides();
     ANewLensAppearsInAnExistingConfig();
     WeightZeroBecomesSwitchedOff();
     TheRetiredIntervalKeyIsIgnoredAndDropped();
+    TheRetiredBioInjectionKeyIsIgnoredAndDropped();
     CadenceOverridesRoundTrip();
     ContentFieldsComeFromTheBuildNotTheFile();
     AnUnknownLensIdIsIgnored();

@@ -753,28 +753,16 @@ namespace AgencyEngine::Director
         {
             const auto settings = SnapshotSettings();
 
-            bool        ok = false;
-            std::string how;
-            PendingImpulses::EntryId entryId = 0;
+            const auto entryId = RecordAsPendingImpulse(d, settings.ledgerSlots, settings.ledgerEnabled);
+            const bool ok = entryId != 0;
+            std::string how = "carried in her bio";
 
-            if (settings.pendingBioInjection) {
-                entryId = RecordAsPendingImpulse(d, settings.ledgerSlots, settings.ledgerEnabled);
-                ok = entryId != 0;
-                how = "carried in her bio";
-                if (ok && settings.generateThought) {
-                    // Two different things about one impulse: the pending entry
-                    // is the agenda, in her words-to-be; this is what carrying it
-                    // feels like.
-                    how += " + thought";
-                    RecordAsThought(d);
-                }
-            } else {
-                // The A/B against carrying: SkyrimNet generates a thought from
-                // the impulse instead of the DLL holding the text. Nothing is in
-                // her bio afterwards, so there is nothing for a cue to be about
-                // and none is set.
-                how = "generated thought";
-                ok = RecordAsThought(d);
+            if (ok && settings.generateThought) {
+                // Two different things about one impulse: the pending entry is
+                // the agenda, in her words-to-be; this is what carrying it
+                // feels like. The store write above is the delivery invariant.
+                how += " + thought";
+                RecordAsThought(d);
             }
 
             // The cue, once the impulse is genuinely in her bio and there is
@@ -782,7 +770,7 @@ namespace AgencyEngine::Director
             // be handed one, which costs the announcement and nothing else — the
             // impulse is carried either way, and drift is the fallback rather
             // than a degrade path.
-            if (ok && settings.pendingBioInjection) {
+            if (ok) {
                 if (!settings.cues) {
                     logger::debug("Cues are off — {} carries it, and it surfaces as it colours what she says",
                                   d.speakerName);
@@ -2346,11 +2334,9 @@ namespace AgencyEngine::Director
 
         void PumpPendingImpulses(const Settings& settings, const GameSnapshot& snap)
         {
-            // No pendingBioInjection gate. Entries now outlive a speaking turn,
-            // so they exist whether or not the bio block is rendered — and
-            // persistence, the TTL and the resolution check all have to keep
-            // running for them, or they accumulate in memory with nothing able
-            // to retire them.
+            // Carrying is invariant, and entries outlive a speaking turn.
+            // Persistence, TTL and resolution therefore keep running for every
+            // accepted impulse until its lifecycle retires it.
             PendingImpulses::SetLedgerCap(settings.ledgerEnabled && settings.ledgerSlots > 0
                                               ? static_cast<std::size_t>(settings.ledgerSlots)
                                               : 1);

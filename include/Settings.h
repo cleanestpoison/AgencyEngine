@@ -158,7 +158,7 @@ namespace AgencyEngine
         // is due makes no LLM calls at all. See docs/adr/0003.
         //
         // How many recent SkyrimNet events to feed the prompt.
-        int   maxEvents = 40;
+        int   maxEvents = 70;
         // Announce a fresh carry with a **cue**: a vague direct narration — she
         // seems to have something on her mind — that grants her a speaking turn
         // and names no subject, because her bio already carries the material.
@@ -210,25 +210,14 @@ namespace AgencyEngine
         // 0 never forces (quietest, purely the model's judgement); 100 forces
         // every turn, and it shows — a forced impulse on a thin day is the
         // weakest thing this prompt writes.
-        int   forcedImpulseChance = 20;
+        int   forcedImpulseChance = 0;
 
         // ---- the carried impulse, held in her bio --------------------------
         //
-        // Carrying is what delivery *is* now: the stage direction is held in the
-        // DLL and rendered into her own character bio by a decorator, verbatim
-        // and privately, and the cue above only announces that there is
-        // something there.
-        //
-        // Off falls back to the interim behaviour this replaced, where SkyrimNet
-        // is asked to generate a private thought from the impulse as a hint —
-        // an LLM call, a paraphrase rather than the text, and no cue, since
-        // there would be nothing for her to speak from. Kept as an A/B against
-        // the carried version rather than as a supported way to run the mod.
-        //
-        // Nothing here can be an event: SkyrimNet stamps a proximity-and-line-of
-        // -sight audience onto every event at creation, so an impulse written as
-        // one is read by bystanders. Measured twice. See PendingImpulse.h.
-        bool  pendingBioInjection = true;
+        // Carrying is delivery: every accepted impulse is held in the DLL and
+        // rendered verbatim into its speaker's private character-bio prompt
+        // contexts. The cue only announces that something is there, and the
+        // optional thought is a second call after this store write succeeds.
         // How long a pending impulse stays in her bio, in *in-game* minutes.
         // 720 = half an in-game day. Past this it is dropped: something she has
         // been meaning to raise for three days is not an agenda, it is a fixture.
