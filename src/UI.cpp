@@ -111,6 +111,10 @@ namespace AgencyEngine::UI
                 ImGui::TextColored(kWarn, "%s", "Waiting for a loaded save.");
             } else if (state.inFlight) {
                 ImGui::TextColored(kGood, "%s", "Generating an impulse now.");
+            } else if (state.deliveryPending && state.cueSpacingRemainingSeconds > 0.0) {
+                ImGui::TextColored(kWarn,
+                                   "Carried - a cue is waiting behind party-wide cue spacing (%.0f s remaining).",
+                                   state.cueSpacingRemainingSeconds);
             } else if (state.deliveryPending && (state.inConversation || state.inVanillaDialogue)) {
                 // The give-up clock is stopped while a conversation is running,
                 // so quoting it here would show a frozen number and read as a
@@ -236,6 +240,12 @@ namespace AgencyEngine::UI
                 ImGui::Text("%d impulse(s) open across the party.",
                             static_cast<int>(state.pendingImpulses.size()));
                 ImGui::TextDisabled("%s", "The list is on the 'Carried' page.");
+            }
+
+            if (state.deliveryPending && state.cueSpacingRemainingSeconds > 0.0) {
+                ImGui::SeparatorText("Cue delivery");
+                ImGui::Text("Party-wide cue spacing: %.0f s remaining.", state.cueSpacingRemainingSeconds);
+                ImGui::TextDisabled("%s", "The oldest waiting companion receives the next available opening.");
             }
 
             // The vanilla-dialogue hold is not subject to either switch, so the

@@ -52,6 +52,17 @@ coalescing across however many carries; it waits for the **settle**, not merely 
 expiring simply drops it.
 _Avoid_: announcement, nudge, prompt
 
+**Cue spacing**:
+The party-wide fixed sixty real seconds after a cue dispatch is attempted during which no other cue may be
+emitted. It applies even when conversation-aware deferral is disabled. A failed attempt still occupies
+this spacing even though it grants no floor.
+It serializes companions competing for the same opening: the oldest waiting cue is emitted first, and
+coalescing a newer carry does not change that order. Other waiting cues remain coalesced rather than
+being sent back to back. Suspended time does not advance the spacing clock. Time a waiting cue spends
+behind cue spacing does not consume its defer budget, because the cue is blocked by an opening already
+granted rather than failing to find a quiet opening.
+_Avoid_: cooldown (which is lens cadence), per-companion delay
+
 **Settle**:
 How long since the last conversational turn before the exchange counts as *over* rather than paused.
 A second, longer threshold on the same clock the quiet check reads, and the two ask different

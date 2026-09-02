@@ -1,5 +1,6 @@
 #include "Director.h"
 #include "CombatEpisode.h"
+#include "CueSpacing.h"
 
 #include "Logging.h"
 #include "PapyrusBridge.h"
@@ -216,6 +217,7 @@ namespace AgencyEngine::Director
         };
         std::mutex              g_cueLock;
         std::vector<PendingCue> g_cues;
+        CueSpacingGate         g_cueSpacing;
 
         // Manual resolution checks asked for from the UI. Written on the render
         // thread, drained on the Director thread, so it needs its own lock —
@@ -1933,20 +1935,27 @@ namespace AgencyEngine::Director
                 std::int64_t heldMs = 0;
             };
             std::vector<Firing>                               firing;
-            std::vector<std::pair<std::uint32_t, std::string>> resolveFirst;
             double                                            oldestHeldSeconds = 0.0;
             std::size_t                                       stillWaiting = 0;
 
+            std::int64_t spacingRemainingMs = 0;
+            bool         hasCues = false;
             {
-                // Nothing waiting is the ordinary state of this function, and
-                // it should cost one uncontended lock rather than a copy of
-                // every carried impulse in the party. The pump clock above is
-                // already stamped, so a long quiet spell cannot make the next
-                // suspended cue jump.
+                // The spacing gate is ephemeral cue state and shares the cue
+                // lock. Advance it even when no cue is waiting: a carry arriving
+                // during the same sixty-second opening must still see the hold.
                 std::scoped_lock lock{ g_cueLock };
-                if (g_cues.empty()) {
-                    return;
+                if (suspended) {
+                    g_cueSpacing.Pause(sinceLastPump);
                 }
+                spacingRemainingMs = g_cueSpacing.RemainingMs(now);
+                hasCues = !g_cues.empty();
+            }
+            WithState([&](Status& state) {
+                state.cueSpacingRemainingSeconds = static_cast<double>(spacingRemainingMs) / 1000.0;
+            });
+            if (!hasCues) {
+                return;
             }
 
             // Everything the entries decide is read once, outside the cue lock:
@@ -2000,6 +2009,11 @@ namespace AgencyEngine::Director
                     // gate it is waiting on could ever open.
                     if (suspended || inDialogue || inConversation) {
                         it->setAtMs += sinceLastPump;
+                    } else {
+                        // Cue spacing is an imposed party-wide hold, not time
+                        // this cue spent failing to find a conversational gap.
+                        it->setAtMs += g_cueSpacing.BlockedDurationMs(
+                            std::max(now - sinceLastPump, it->setAtMs), now);
                     }
                     const auto heldMs = now - it->setAtMs;
                     oldestHeldSeconds = std::max(oldestHeldSeconds, static_cast<double>(heldMs) / 1000.0);
@@ -2036,10 +2050,20 @@ namespace AgencyEngine::Director
                     // exchange, and announcing it would have her raise a subject
                     // the party just closed.
 
+                    // Oldest first: g_cues retains insertion order and
+                    // coalescing never moves an existing companion. Stamping
+                    // synchronously here prevents a second cue from entering
+                    // this same firing batch, even before SkyrimNet records the
+                    // narration or rejects it.
+                    if (!g_cueSpacing.TryBeginAttempt(now)) {
+                        ++it;
+                        continue;
+                    }
                     firing.push_back(Firing{ *it, heldMs });
                     it = g_cues.erase(it);
                 }
                 stillWaiting = g_cues.size();
+                spacingRemainingMs = g_cueSpacing.RemainingMs(now);
             }
 
 
@@ -2048,6 +2072,7 @@ namespace AgencyEngine::Director
             WithState([&](Status& state) {
                 state.deliveryPending = stillWaiting > 0;
                 state.deliveryHeldSeconds = stillWaiting > 0 ? oldestHeldSeconds : 0.0;
+                state.cueSpacingRemainingSeconds = static_cast<double>(spacingRemainingMs) / 1000.0;
             });
 
             for (auto& pending : firing) {
@@ -2750,6 +2775,7 @@ namespace AgencyEngine::Director
             // still in her bio in the save that carries it.
             std::scoped_lock lock{ g_cueLock };
             g_cues.clear();
+            g_cueSpacing.Reset();
         }
         {
             // A button pressed before the load was meant for the party in the
@@ -2766,6 +2792,7 @@ namespace AgencyEngine::Director
             state.inFlight = false;
             state.deliveryPending = false;
             state.deliveryHeldSeconds = 0.0;
+            state.cueSpacingRemainingSeconds = 0.0;
             state.snapshot = {};
             // continuousOwned is deliberately NOT cleared here: the Director
             // needs it on its next pass to know whether it still owes SkyrimNet

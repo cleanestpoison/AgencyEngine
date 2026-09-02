@@ -19,9 +19,9 @@
    that grant. Spoken is raised/unmet: already introduced, still outstanding.
    Each returns a short markdown list or empty string.
 
-   Only foreground may open its subject. Background can colour the current
-   reply but must not interrupt it. Raised/unmet may answer if the other person
-   returns to it, but must never introduce itself again.
+   Foreground owns the opening the mod granted. Background may surface when it
+   directly fits the exchange already underway, but must not make her hunt for
+   an opening or change the subject. Raised/unmet must not replay its opening.
 
    A companion may carry one entry per lens. The DLL renders newest first.
    Decorator names resolve at parse time, so these prompts and the DLL must ship
@@ -67,28 +67,29 @@
    which is the nag failure the impulse prompt spends several paragraphs
    avoiding.
 
-   The two closings are where to tune now, and they fail in opposite ways.
-   Too soft on the granted-floor side and the cue is spent on a line that never
-   opens the subject — the mod found her a gap and she talked about the weather.
-   Too hard on the carried side and the interruption is back, because that is
-   the branch rendering on every ordinary turn she takes.
+   The three closings carry different risks. Too soft on the granted-floor side
+   and the cue is spent on a line that never opens the subject — the mod found
+   her a gap and she talked about the weather. Too eager on the background side
+   and the interruption is back, because that branch renders on every ordinary
+   turn she takes. Too hard, though, and uncued entries can never surface through
+   the contextual drift that is their delivery fallback.
    ========================================================================== #}
 {% set agencyengine_foreground = agencyengine_pending_impulse(npc.UUID) %}
 {% set agencyengine_background = agencyengine_pending_background(npc.UUID) %}
 {% set agencyengine_spoken = agencyengine_pending_spoken(npc.UUID) %}
 {% if agencyengine_foreground != "" %}
-## Raise this now
+## Subject for {{ npc.name }} to raise now
 {{ agencyengine_foreground }}
-The floor is yours for this subject alone. Open it briefly.
+The floor has been granted to {{ npc.name }} for this subject. {{ npc.name }} should bring it up briefly and naturally, without forcing every detail into one line.
 {% endif %}
 {% if agencyengine_background != "" %}
-## Other untouched subjects
+## Other untouched subjects for {{ npc.name }}
 {{ agencyengine_background }}
-Background only. Do not introduce these without their own opening.
+Keep these in the background. They may inform what {{ npc.name }} says and may be mentioned when one directly fits the exchange already underway, but {{ npc.name }} should not change the subject or look for an opening for them.
 {% endif %}
 {% if agencyengine_spoken != "" %}
-## Already raised, still unmet
+## Subjects {{ npc.name }} has already raised
 {{ agencyengine_spoken }}
-Do not introduce these again. Respond only if the other person returns to them.
+These remain unresolved. {{ npc.name }} should not repeat their opening or press for an answer, but may continue naturally when the conversation returns to one.
 {% endif %}
 {% endif %}

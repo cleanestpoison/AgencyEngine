@@ -194,6 +194,10 @@ namespace AgencyEngine
         bool         deliveryPending = false;   // at least one cue is waiting
         // Real seconds the oldest waiting cue has been held, for the UI.
         double       deliveryHeldSeconds = 0.0;
+        // Party-wide fixed spacing after the last cue dispatch attempt. This
+        // counts down even with conversation deferral off, but pauses while play
+        // is suspended. Nonzero explains why a queued cue cannot emit yet.
+        double       cueSpacingRemainingSeconds = 0.0;
 
         std::string lastError;
         std::string lastContextJson;   // debug: what we last sent

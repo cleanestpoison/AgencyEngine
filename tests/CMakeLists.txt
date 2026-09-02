@@ -40,6 +40,17 @@ target_include_directories(AgencyEngineCombatEpisodeTests PRIVATE shim "${CMAKE_
 target_precompile_headers(AgencyEngineCombatEpisodeTests PRIVATE TestPCH.h)
 add_test(NAME combat-episode COMMAND AgencyEngineCombatEpisodeTests)
 
+# Cue dispatch spacing is pure real-time state. Keep its attempt boundary
+# offline so two companions becoming eligible in one Director pass cannot
+# regress into a narration burst.
+add_executable(AgencyEngineCueSpacingTests
+    CueSpacingTests.cpp
+)
+target_compile_features(AgencyEngineCueSpacingTests PRIVATE cxx_std_23)
+target_include_directories(AgencyEngineCueSpacingTests PRIVATE shim "${CMAKE_SOURCE_DIR}/include")
+target_precompile_headers(AgencyEngineCueSpacingTests PRIVATE TestPCH.h)
+add_test(NAME cue-spacing COMMAND AgencyEngineCueSpacingTests)
+
 # shim/ ahead of include/ so that `#include "Logging.h"` from the ledger finds
 # the stub rather than the spdlog/SKSE one.
 target_include_directories(AgencyEngineTests PRIVATE shim "${CMAKE_SOURCE_DIR}/include")

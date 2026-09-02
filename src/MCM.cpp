@@ -211,6 +211,10 @@ namespace AgencyEngine::MCM
                 summary = "Waiting for a loaded save.";
             } else if (state.inFlight) {
                 summary = "Generating an impulse now.";
+            } else if (state.deliveryPending && state.cueSpacingRemainingSeconds > 0.0) {
+                summary = std::format("Carried - a cue is waiting behind party-wide cue spacing ({:.0f} seconds "
+                                      "remaining).",
+                                      state.cueSpacingRemainingSeconds);
             } else if (state.deliveryPending && (state.inConversation || state.inVanillaDialogue)) {
                 summary = std::format("Carried - a cue is held until the {} conversation is over.",
                                       state.inVanillaDialogue ? "current" : "party's");
@@ -284,6 +288,11 @@ namespace AgencyEngine::MCM
                              state.pendingImpulses.empty()
                                  ? "Nobody is carrying anything"
                                  : std::format("{} impulse(s) open", state.pendingImpulses.size()) });
+            if (state.deliveryPending && state.cueSpacingRemainingSeconds > 0.0) {
+                rows.push_back({ "Cue spacing",
+                                 std::format("{:.0f} seconds remaining; oldest waiting companion is next",
+                                             state.cueSpacingRemainingSeconds) });
+            }
 
             if (settings.deferOnConversation || settings.injectQuietGap || state.inVanillaDialogue) {
                 std::string conversation;

@@ -32,7 +32,10 @@ Curiosity every 6), whenever a follower is present and you're not in combat:
    it is held in the DLL and rendered into that companion's own character bio, verbatim, privately, with no LLM
    call to deliver it. One per companion per lens, newest first, so two lenses landing together coexist instead of
    one overwriting the other.
-5. Set a **cue** for her: a vague direct narration that grants one exact entry a 30-second floor. If that
+5. Set a **cue** for her: a vague direct narration that grants one exact entry a 30-second floor. Cue dispatch
+   attempts are serialized party-wide with a fixed 60-real-second spacing, including failed attempts; the oldest
+   waiting companion goes first, and spacing applies even when conversation-aware deferral is off. Time behind
+   spacing does not consume a waiting cue's give-up budget, and suspended time does not advance spacing. If the
    companion speaks after the grant, the entry becomes **raised/unmet** with no resolver call. The owner line is not
    resolution evidence; only a later response or action can settle it. Raised/unmet dialogue uses speaker/target
    participation rather than literal topic words, so paraphrases reach the semantic resolver. Untouched carries
