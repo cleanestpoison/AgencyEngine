@@ -19,7 +19,12 @@ works at the level of the whole playthrough rather than the party.
 ## What it does today
 
 Each **lens** asks on its own in-game clock (Aspiration every 2 game hours, Relationship every 6, Activity every 4,
-Curiosity every 6), whenever a follower is present and you're not in combat:
+Curiosity every 6), whenever an awake follower is present and you're not in combat:
+
+Sleeping companions are excluded from the selection roster. Sleep is checked again before a new impulse is
+carried and before a cue is sent, covering companions who fall asleep while an LLM request or cue is pending.
+A cue dropped for sleep leaves its existing carried impulse intact. This checks the game's sleeping state,
+not ordinary sitting or the transitions into and out of sleep.
 
 1. Pull the recent SkyrimNet event tail for the player and each follower. The shipped player-event budget is 70;
    existing filters and per-follower limits still decide what renders.

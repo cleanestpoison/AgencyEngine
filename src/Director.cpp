@@ -503,8 +503,14 @@ namespace AgencyEngine::Director
 
         // ---- main thread -------------------------------------------------
 
-        // Reads everything we need out of the game. Posted as an SKSE task, so
-        // this is the only place in the Director that touches game objects.
+        // Main-thread only, including the rechecks after asynchronous work.
+        bool IsSleeping(const RE::Actor& actor)
+        {
+            return actor.AsActorState()->GetSitSleepState() == RE::SIT_SLEEP_STATE::kIsSleeping;
+        }
+
+        // Reads the selection roster and world state out of the game. Posted as
+        // an SKSE task; delivery also rechecks sleep on the main thread.
         void CaptureSnapshot()
         {
             GameSnapshot snap;
@@ -576,13 +582,13 @@ namespace AgencyEngine::Director
                     snap.windowActive = main->gameActive;
                 }
 
-                // Followers = loaded, living actors flagged as player teammates.
+                // Selectable followers = loaded, living, awake player teammates.
                 // That covers vanilla followers and every follower framework
                 // that goes through SetPlayerTeammate, which is all of them.
                 if (auto* processLists = RE::ProcessLists::GetSingleton()) {
                     for (auto& handle : processLists->highActorHandles) {
                         auto actor = handle.get();
-                        if (!actor || actor->IsDead() || !actor->IsPlayerTeammate()) {
+                        if (!actor || actor->IsDead() || !actor->IsPlayerTeammate() || IsSleeping(*actor)) {
                             continue;
                         }
                         FollowerInfo info;
@@ -753,6 +759,13 @@ namespace AgencyEngine::Director
         // agenda to speak from, and she fills it with nothing.
         void CarryImpulse(ImpulseDelivery d)
         {
+            // The LLM may have been in flight when this companion went to bed.
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(d.speakerFormID);
+            if (actor && IsSleeping(*actor)) {
+                logger::info("Dropping {}'s new impulse — the companion is sleeping", d.speakerName);
+                return;
+            }
+
             const auto settings = SnapshotSettings();
 
             const auto entryId = RecordAsPendingImpulse(d, settings.ledgerSlots, settings.ledgerEnabled);
@@ -2091,6 +2104,14 @@ namespace AgencyEngine::Director
                              DescribeReading(snap, reading));
                 if (auto* tasks = SKSE::GetTaskInterface()) {
                     tasks->AddTask([cue = pending.cue]() {
+                        // A cue can outlive the awake snapshot that selected its
+                        // speaker. Drop the announcement, not the carried subject.
+                        auto* actor = RE::TESForm::LookupByID<RE::Actor>(cue.formID);
+                        if (actor && IsSleeping(*actor)) {
+                            logger::info("Dropping {}'s cue — the companion is sleeping; the impulse stays carried",
+                                         cue.speakerName);
+                            return;
+                        }
                         if (!PapyrusBridge::DirectNarration(CueText(cue), cue.speakerUuid,
                                                             cue.ownership.target.id)) {
                             logger::error("The cue for {} failed to reach SkyrimNet — she keeps carrying it, and it "
