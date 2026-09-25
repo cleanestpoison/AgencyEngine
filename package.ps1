@@ -32,15 +32,16 @@ $ErrorActionPreference = 'Stop'
 #
 # Default to the project version in CMakeLists.txt so the archive name can't
 # drift from what the DLL reports to SKSE.
-if (-not $Version) {
-    $cmakeLists = Get-Content (Join-Path $PSScriptRoot 'CMakeLists.txt') -Raw
-    if ($cmakeLists -match 'project\s*\(\s*AgencyEngine\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)') {
-        $Version = $Matches[1]
-    } else {
-        throw "Couldn't read the project version out of CMakeLists.txt. Pass -Version explicitly."
-    }
+$cmakeLists = Get-Content (Join-Path $PSScriptRoot 'CMakeLists.txt') -Raw
+if ($cmakeLists -notmatch 'project\s*\(\s*AgencyEngine\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)') {
+    throw "Couldn't read the project version out of CMakeLists.txt."
 }
+$projectVersion = $Matches[1]
+if (-not $Version) { $Version = $projectVersion }
 $Version = $Version -replace '^[vV]', ''
+if ($Version -cne $projectVersion) {
+    throw "Archive version $Version differs from project version $projectVersion. Use release.ps1 to bump the version."
+}
 
 # --- 2. Build ---------------------------------------------------------------
 #
@@ -111,11 +112,46 @@ foreach ($scriptName in @('AgencyEngine_Bridge', 'AgencyEngine_MCM', 'AgencyEngi
         throw "No $scriptName.pex in $modFolder — the Papyrus statics deploy didn't run."
     }
 }
+
+# Beta 25 content is an external layer, separate from native LLM configuration.
+$skyrimNet = Join-Path $modFolder 'SKSE\Plugins\SkyrimNet'
+$contentRoot = Join-Path $skyrimNet 'external\cleanestpoison.agencyengine'
+$manifestPath = Join-Path $contentRoot 'manifest.json'
+if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    throw "Missing Beta 25 content manifest — run a build first."
+}
+$manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+if ($manifest.id -cne 'cleanestpoison.agencyengine' -or
+    $manifest.author -cne 'cleanestpoison' -or
+    $manifest.type -cne 'bundle' -or
+    $manifest.version -cnotmatch '^\d+\.\d+\.\d+$' -or
+    $manifest.min_skyrimnet_version -cne '0.25.0') {
+    throw "Invalid AgencyEngine Beta 25 content manifest."
+}
+if ($manifest.version -cne $Version) {
+    throw "Content version $($manifest.version) differs from release version $Version — rebuild with matching versions."
+}
+foreach ($relative in @('prompts', 'library', 'overlay', 'saves', 'content-registry.json',
+                        'config\triggers', 'config\actions')) {
+    $path = Join-Path $skyrimNet $relative
+    if ((Test-Path -LiteralPath $path -PathType Leaf) -or
+        ((Test-Path -LiteralPath $path -PathType Container) -and
+         @(Get-ChildItem -LiteralPath $path -Recurse -File).Count -gt 0)) {
+        throw "Obsolete content or player state in staging: $relative — refusing to package."
+    }
+}
+$bioPrompt = Join-Path $contentRoot 'prompts\submodules\character_bio\7200_pending_impulse.prompt'
+if (-not (Test-Path -LiteralPath $bioPrompt -PathType Leaf)) {
+    throw "Missing private carried-impulse bio submodule — run a build first."
+}
+if (-not (Test-Path -LiteralPath (Join-Path $skyrimNet 'config\plugins\AgencyEngine\manifest.yaml') -PathType Leaf)) {
+    throw "Missing native LLM variant manifest — run a build first."
+}
 # Every prompt the shipped defaults dispatch, not just the spine: a lens whose
 # file is missing renders as nothing and costs the whole impulse, which shows up
 # as a lens that is simply always quiet rather than as an error.
 foreach ($name in @('base', 'aspiration', 'relationship', 'activity', 'curiosity', 'resolved')) {
-    $prompt = Join-Path $modFolder "SKSE\Plugins\SkyrimNet\prompts\agencyengine_impulse_$name.prompt"
+    $prompt = Join-Path $contentRoot "prompts\agencyengine_impulse_$name.prompt"
     if (-not (Test-Path -LiteralPath $prompt)) {
         throw "No agencyengine_impulse_$name.prompt in $modFolder — the statics deploy didn't run."
     }

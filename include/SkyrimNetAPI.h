@@ -75,7 +75,7 @@ namespace AgencyEngine::SkyrimNetAPI
     // sidecar files per playthrough.
     std::string GetSaveUniqueID();
 
-    // Renders Data/SKSE/Plugins/SkyrimNet/prompts/<promptName>.prompt against
+    // Renders the winning content-library prompts/<promptName>.prompt against
     // `contextJson` and sends it to the configured LLM.
     //
     // WARNING: `callback` is invoked on a SkyrimNet worker thread, not the

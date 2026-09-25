@@ -715,7 +715,8 @@ namespace AgencyEngine::UI
                 ImGui::EndTable();
             }
 
-            HelpMarker("Each prompt file resolves to Data/SKSE/Plugins/SkyrimNet/prompts/<name>.prompt");
+            HelpMarker("Each prompt resolves to prompts/<name>.prompt in SkyrimNet's content library. "
+                       "Ship custom lenses in an external plugin, or edit them in the dashboard.");
             Note("Next ask counts down in in-game minutes, with the real time it works out to underneath. It "
                  "stretches and compresses with the timescale rather than with the clock, so sleeping or "
                  "waiting brings every one of these forward. Several lenses coming due at once is ordinary and "

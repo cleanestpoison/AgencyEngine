@@ -973,7 +973,7 @@ Event OnOptionHighlight(Int option)
 
 	index = FindOption(_lensEnabledOids, option)
 	If index >= 0
-		SetInfoText("Whether this lens asks at all. Disable a lens whose prompt depends on content you do not have installed.")
+		SetInfoText("Whether this lens asks at all. Prompts resolve to prompts/<name>.prompt in SkyrimNet's content library. Ship custom lenses in an external plugin, or edit them in the dashboard. Disable lenses whose required content is missing.")
 		Return
 	EndIf
 

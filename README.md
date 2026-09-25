@@ -109,7 +109,7 @@ a supported way to configure anything (it has comments in it, and JSON has no co
 ## Requirements
 
 - SKSE64 or SKSE VR, plus the matching Address Library/CommonLib runtime support
-- **SkyrimNet** (built against beta23-rc2's `CppAPI/PublicAPI.h`; API v9)
+- **SkyrimNet Beta 25 (0.25.0) or newer** for the external content library. The native integration uses API v9.
 - Optional standing integrations:
   - **SeverActions** — player rapport and companion-to-companion opinions
   - **[SkyrimNet Relationships](https://github.com/deadohiosky48/SkyrimNet-Relationships) 1.1.2+** — authoritative
@@ -264,8 +264,8 @@ Papyrus scripts or prompt files are missing from the deploy, and zips the *conte
 The archive therefore has `AgencyEngine.esp`, `Scripts/` and `SKSE/` directly at its root, which MO2 and Vortex
 install without a FOMOD.
 
-The version defaults to the `project(AgencyEngine VERSION ...)` line in `CMakeLists.txt`, so the archive name can't
-drift from what the DLL reports to SKSE.
+The version defaults to the `project(AgencyEngine VERSION ...)` line in `CMakeLists.txt`. Packaging refuses
+an explicit archive version or deployed content manifest version that differs from it.
 
 ## Cutting a release
 
@@ -274,9 +274,9 @@ pwsh -File release.ps1 0.2.0 -DryRun    # every check, no writes
 pwsh -File release.ps1 0.2.0            # bump, build, tag, publish
 ```
 
-`release.ps1` rewrites the version in `CMakeLists.txt`, builds and packages, commits the bump, tags it, pushes, and
-creates the GitHub release with the archive attached. `CMakeLists.txt` is the single source of truth, so the version
-SKSE reports, the git tag and the archive filename are the same by construction rather than by discipline.
+`release.ps1` rewrites the version in `CMakeLists.txt` and the external content `manifest.json`, builds and
+packages, commits both, tags, pushes, and creates the GitHub release with the archive attached.
+The native plugin, content bundle, git tag and archive filename share one AgencyEngine version.
 
 The build happens locally, not on a runner, because compiling needs SkyrimNet's `CppAPI/PublicAPI.h` — that header
 ships with the SkyrimNet mod and isn't vendored here, so CI has no way to obtain it. `gh` is used only to publish.
@@ -287,19 +287,22 @@ during: that no `.psc` is newer than its committed `.pex` (which surfaces in-gam
 as a build error), and that no `.pex` header carries the compiling machine's username or hostname — the Bethesda
 compiler writes both into every `.pex` and has no flag to suppress it, so a rebuild silently reintroduces them.
 
-A failed build restores `CMakeLists.txt`, and a failed tag push deletes the local tag, so an aborted run leaves
-nothing half-done to clean up by hand.
+A failed build restores both version files, and a failed tag push deletes the local tag, so an aborted run leaves
+no partial version bump to clean up by hand.
 
 ## What gets installed
 
 ```
 AgencyEngine.esp                                                     (ESL-flagged; hosts the optional SkyUI MCM quest)
 SKSE/Plugins/AgencyEngine.dll
-SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_base.prompt         (the shared spine)
-SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_aspiration.prompt
-SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_relationship.prompt
-SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_activity.prompt
-SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_curiosity.prompt
+SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/manifest.json
+SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/prompts/agencyengine_impulse_base.prompt
+SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/prompts/agencyengine_impulse_aspiration.prompt
+SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/prompts/agencyengine_impulse_relationship.prompt
+SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/prompts/agencyengine_impulse_activity.prompt
+SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/prompts/agencyengine_impulse_curiosity.prompt
+SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/prompts/agencyengine_impulse_resolved.prompt
+SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/prompts/submodules/character_bio/7200_pending_impulse.prompt
 SKSE/Plugins/SkyrimNet/config/plugins/AgencyEngine/manifest.yaml
 SKSE/Plugins/AgencyEngine.json.example                                 (documentation; never read)
 Scripts/AgencyEngine_Bridge.pex
@@ -312,15 +315,37 @@ There is no `AgencyEngine.json` in that list, and that is the point — see *Set
 Every lens shares the one `agencyengine_impulse` LLM variant — they are the same job at the same cost, so one
 variant means one place in SkyrimNet's UI to point impulse generation at a cheaper model.
 
-The two SkyrimNet files sit exactly where SkyrimNet's own auto-discovery looks — the same layout the narrative
-engine uses, and the reason `statics/` mirrors the mod folder verbatim rather than being flattened at deploy time:
+The two manifests serve different purposes:
 
-- **`prompts/<name>.prompt`** — SkyrimNet resolves `SendCustomPromptToLLM("agencyengine_impulse_aspiration", ...)` to
-  `Data/SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_aspiration.prompt`. No registration step, purely
-  path-based, so the files must land at those paths and must not be overwritten by another mod.
-- **`config/plugins/AgencyEngine/manifest.yaml`** — declares the `agencyengine_impulse` LLM *variant*, which is what
-  lets you point impulse generation at a cheaper model than your dialogue model from inside SkyrimNet's own UI.
-  Without it, impulses silently fall back to the default Dialogue LLM.
+- **`external/cleanestpoison.agencyengine/manifest.json`** registers the Beta 25 content bundle. Prompt names and
+  inheritance are unchanged: `SendCustomPromptToLLM("agencyengine_impulse_aspiration", ...)` resolves the winning
+  `prompts/agencyengine_impulse_aspiration.prompt` in SkyrimNet's content library. The private bio submodule keeps
+  its relative path and render-mode guards. The bundle needs the native DLL and scripts; it is not a standalone mod.
+- **`config/plugins/AgencyEngine/manifest.yaml`** remains outside that bundle. It declares the
+  `agencyengine_impulse` and `agencyengine_resolve` LLM variants and their configuration schema, not content.
+  The Beta 25 content migration does not move this native-integration configuration into `manifest.json`.
+
+The content bundle uses the same version as AgencyEngine. `release.ps1` updates its `manifest.json` alongside
+the native project version; prompt-only changes also require a new AgencyEngine release.
+`min_skyrimnet_version: 0.25.0` declares the required content format; it is not an in-game test attestation.
+
+### Upgrading to Beta 25
+
+Replace the old AgencyEngine installation with the new archive through your mod manager. SkyrimNet no longer reads
+the old loose `SkyrimNet/prompts/` files. The staging build removes AgencyEngine's seven former prompt outputs;
+packaging refuses leftover loose content or player-owned `library/`, `overlay/`, `saves/`, and registry state.
+Neither step changes your live mod installation.
+
+Do **not** use **Plugins > Import Old Content** for unmodified AgencyEngine prompts: an imported overlay copy
+shadows the shipped bundle and hides future updates. Import only personal edits you intend to keep, and revert
+stale AgencyEngine overlay overrides in the dashboard when you want the shipped prompts again.
+
+Before release, launch Beta 25 and confirm **AgencyEngine** appears in **Plugins > Installed Plugins** with the
+**External** badge and no rejection or skipped-file warnings in `SkyrimNet.log`. Exercise a lens ask, a resolution
+check, and the private carried-impulse bio rendering; verify both LLM variants and the prompt guidance in SKSE Menu
+Framework and SkyUI MCM. An offline archive/build check cannot establish these runtime results.
+
+Migration reference: [SkyrimNet's Beta 25 guide](https://github.com/MinLL/SkyrimNet-GamePlugin/blob/main/docs/modding/MIGRATING_TO_BETA25.md).
 
 Load order relative to SkyrimNet doesn't matter — the DLL resolves SkyrimNet at `kDataLoaded`.
 
@@ -454,10 +479,11 @@ subjects come round again and get rewritten under a live lens.
 
 ### Writing your own lens
 
-The blank rows at the bottom of the Lenses tab are yours. Fill in a name, a prompt file (which resolves to
-`Data/SKSE/Plugins/SkyrimNet/prompts/<name>.prompt` and must `{% extends %}` `agencyengine_impulse_base.prompt`), an
-interval, a cooldown, whether it produces proposals, and its slot count. Seven lenses is the table's limit, of
-which four are the mod's own.
+The blank rows at the bottom of the Lenses tab are yours. Fill in a name, a prompt name (which resolves to
+`prompts/<name>.prompt` in SkyrimNet's content library and must `{% extends %}` `agencyengine_impulse_base.prompt`),
+an interval, a cooldown, whether it produces proposals, and its slot count. Ship the prompt in your own external
+plugin or create it through the dashboard; do not put it in the retired loose `SkyrimNet/prompts/` directory.
+Seven lenses is the table's limit, of which four are the mod's own.
 
 A lens you wrote has no shipped row behind it, so unlike the mod's own it is stored whole in the config file, under
 `customLenses` — nothing in an update can add to it, change it or take it away.

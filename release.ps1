@@ -8,8 +8,8 @@
 # pipeline: it produces the archive locally and uses `gh` only to publish.
 #
 # CMakeLists.txt is the single source of truth for the version. This rewrites
-# the project() line, and the tag and archive name are both derived from it —
-# so the version SKSE reports, the tag, and the filename cannot disagree.
+# the project() line and the external content manifest together; the tag and
+# archive name use the same version.
 #
 # Usage:
 #   pwsh -File release.ps1 0.2.0
@@ -205,6 +205,17 @@ if (-not $m.Success) {
 $oldVersion = $m.Groups[2].Value
 $bumped     = $cmakeText -replace $pattern, "`${1}$Version"
 $versionChanged = $oldVersion -ne $Version
+$manifestRelative = 'statics/SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/manifest.json'
+$manifestPath = Join-Path $repo $manifestRelative
+$manifestText = Get-Content -LiteralPath $manifestPath -Raw
+$manifest = $manifestText | ConvertFrom-Json
+$manifestPattern = '("version"\s*:\s*")([0-9]+\.[0-9]+\.[0-9]+)(")'
+if ($manifest.id -cne 'cleanestpoison.agencyengine' -or
+    [regex]::Matches($manifestText, $manifestPattern).Count -ne 1) {
+    throw "Couldn't identify the AgencyEngine content manifest version."
+}
+$manifestBumped = $manifestText -replace $manifestPattern, "`${1}$Version`${3}"
+$manifestChanged = $manifest.version -cne $Version
 
 if (-not $versionChanged) {
     Write-Ok "already $Version — no bump needed"
@@ -213,6 +224,14 @@ if (-not $versionChanged) {
 } else {
     Set-Content -LiteralPath $cmakePath -Value $bumped -NoNewline
     Write-Ok "$oldVersion -> $Version"
+}
+if ($manifestChanged) {
+    if ($DryRun) {
+        Write-Skip "bump content manifest $($manifest.version) -> $Version"
+    } else {
+        Set-Content -LiteralPath $manifestPath -Value $manifestBumped -NoNewline
+        Write-Ok "content manifest -> $Version"
+    }
 }
 
 # --- 5. Build and package ---------------------------------------------------
@@ -231,10 +250,14 @@ if ($SkipBuild) {
         & (Join-Path $repo 'package.ps1') -Version $Version -Preset $Preset
         if ($LASTEXITCODE -ne 0) { throw "package.ps1 exited $LASTEXITCODE" }
     } catch {
-        # Put CMakeLists.txt back so a failed release leaves no trace.
+        # Restore both version sources when the build fails.
         if ($versionChanged) {
             Set-Content -LiteralPath $cmakePath -Value $cmakeText -NoNewline
             Write-Host "    Restored CMakeLists.txt to $oldVersion" -ForegroundColor Yellow
+        }
+        if ($manifestChanged) {
+            Set-Content -LiteralPath $manifestPath -Value $manifestText -NoNewline
+            Write-Host "    Restored content manifest to $($manifest.version)" -ForegroundColor Yellow
         }
         throw
     }
@@ -270,7 +293,7 @@ if ($NotesFile) {
 
 Install ``AgencyEngine-v$Version.zip`` with MO2 or Vortex. Its root contains ``AgencyEngine.esp``, ``Scripts/``, and ``SKSE/``, so it installs directly with no FOMOD.
 
-**Requires** SKSE64, Address Library, and [SkyrimNet](https://www.nexusmods.com/skyrimspecialedition/mods/153017). SKSE Menu Framework and SkyUI/SkyUI VR are optional parallel interfaces; install either or both. The Skyrim VR MCM host also requires [Skyrim VR ESL](https://github.com/Nightfallstorm/SkyrimVRESL).
+**Requires** SKSE64, Address Library, and [SkyrimNet](https://www.nexusmods.com/skyrimspecialedition/mods/153017) Beta 25 (0.25.0) or newer. SKSE Menu Framework and SkyUI/SkyUI VR are optional parallel interfaces; install either or both. The Skyrim VR MCM host also requires [Skyrim VR ESL](https://github.com/Nightfallstorm/SkyrimVRESL).
 "@
 }
 
@@ -283,15 +306,15 @@ Write-Host ($notes -split "`n" | ForEach-Object { "    $_" } | Out-String)
 Write-Step 'Commit, tag, push'
 
 if ($DryRun) {
-    Write-Skip "commit CMakeLists.txt as 'Release $tag'"
+    Write-Skip "commit CMakeLists.txt and the content manifest as 'Release $tag'"
     Write-Skip "tag $tag and push it to origin"
     Write-Skip "create the GitHub release with $([IO.Path]::GetFileName($archive)) attached"
     Write-Host "==> Dry run complete — nothing was written." -ForegroundColor Green
     return
 }
 
-if ($versionChanged) {
-    git add CMakeLists.txt
+if ($versionChanged -or $manifestChanged) {
+    git add CMakeLists.txt $manifestRelative
     git commit -m "Release $tag" --quiet
     if ($LASTEXITCODE -ne 0) { throw 'git commit failed.' }
     Write-Ok "committed the version bump"

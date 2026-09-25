@@ -193,7 +193,19 @@ if(DEFINED OUTPUT_FOLDER)
             list(APPEND STATICS_DEPLOY_OUTPUTS "${dst}")
         endforeach()
         if(STATICS_DEPLOY_OUTPUTS)
+            # Beta 25 reads prompts from external content layers. Remove only
+            # our former outputs; never delete a shared SkyrimNet directory.
+            set(LEGACY_PROMPTS "")
+            foreach(name base aspiration relationship activity curiosity resolved)
+                list(APPEND LEGACY_PROMPTS
+                    "${OUTPUT_FOLDER}/SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_${name}.prompt")
+            endforeach()
+            list(APPEND LEGACY_PROMPTS
+                "${OUTPUT_FOLDER}/SKSE/Plugins/SkyrimNet/prompts/submodules/character_bio/7200_pending_impulse.prompt")
             add_custom_target(deploy_statics ALL DEPENDS ${STATICS_DEPLOY_OUTPUTS})
+            add_custom_command(TARGET deploy_statics POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E rm -f ${LEGACY_PROMPTS}
+                VERBATIM)
             message(STATUS "Statics deploy: ${STATICS_SOURCE_DIR} -> ${OUTPUT_FOLDER}")
         endif()
     endif()

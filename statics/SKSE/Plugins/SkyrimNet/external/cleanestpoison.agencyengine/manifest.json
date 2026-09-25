@@ -1,0 +1,13 @@
+{
+  "id": "cleanestpoison.agencyengine",
+  "type": "bundle",
+  "title": "AgencyEngine",
+  "tagline": "Companions raise their own topics and proposals from what has happened to the party.",
+  "description": "Lens prompts and private carried-impulse bio guidance for AgencyEngine. Requires the AgencyEngine SKSE DLL and scripts from the full mod; this content bundle does not run independently.",
+  "author": "cleanestpoison",
+  "tags": ["followers", "dialogue"],
+  "nsfw": false,
+  "icon": "sparkles",
+  "version": "0.10.1",
+  "min_skyrimnet_version": "0.25.0"
+}

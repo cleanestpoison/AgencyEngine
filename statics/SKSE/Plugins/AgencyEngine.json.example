@@ -77,7 +77,7 @@
 
   // A lens you wrote yourself has no shipped row behind it, so it is stored
   // whole. `prompt` resolves to
-  // Data/SKSE/Plugins/SkyrimNet/prompts/<prompt>.prompt, and that file must
+  // prompts/<prompt>.prompt in SkyrimNet's content library, and that file must
   // {% extends %} agencyengine_impulse_base.prompt. Omitted entirely by default.
   "customLenses": []
 }
