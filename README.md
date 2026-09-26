@@ -109,7 +109,7 @@ a supported way to configure anything (it has comments in it, and JSON has no co
 ## Requirements
 
 - SKSE64 or SKSE VR, plus the matching Address Library/CommonLib runtime support
-- **SkyrimNet Beta 25 (0.25.0) or newer** for the external content library. The native integration uses API v9.
+- **SkyrimNet Beta 25 rc12 or newer** with bundled `settings/` support (`min_skyrimnet_version: 0.25.0`). Earlier Beta 25 candidates do not support this layout. The native integration uses API v9.
 - Optional standing integrations:
   - **SeverActions** — player rapport and companion-to-companion opinions
   - **[SkyrimNet Relationships](https://github.com/deadohiosky48/SkyrimNet-Relationships) 1.1.2+** — authoritative
@@ -303,7 +303,7 @@ SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/prompts/agencyengine
 SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/prompts/agencyengine_impulse_curiosity.prompt
 SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/prompts/agencyengine_impulse_resolved.prompt
 SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/prompts/submodules/character_bio/7200_pending_impulse.prompt
-SKSE/Plugins/SkyrimNet/config/plugins/AgencyEngine/manifest.yaml
+SKSE/Plugins/SkyrimNet/external/cleanestpoison.agencyengine/settings/AgencyEngine.yaml
 SKSE/Plugins/AgencyEngine.json.example                                 (documentation; never read)
 Scripts/AgencyEngine_Bridge.pex
 Scripts/AgencyEngine_MCM.pex
@@ -315,15 +315,19 @@ There is no `AgencyEngine.json` in that list, and that is the point — see *Set
 Every lens shares the one `agencyengine_impulse` LLM variant — they are the same job at the same cost, so one
 variant means one place in SkyrimNet's UI to point impulse generation at a cheaper model.
 
-The two manifests serve different purposes:
+The manifest and settings schema serve different purposes within the same bundle:
 
 - **`external/cleanestpoison.agencyengine/manifest.json`** registers the Beta 25 content bundle. Prompt names and
   inheritance are unchanged: `SendCustomPromptToLLM("agencyengine_impulse_aspiration", ...)` resolves the winning
   `prompts/agencyengine_impulse_aspiration.prompt` in SkyrimNet's content library. The private bio submodule keeps
   its relative path and render-mode guards. The bundle needs the native DLL and scripts; it is not a standalone mod.
-- **`config/plugins/AgencyEngine/manifest.yaml`** remains outside that bundle. It declares the
-  `agencyengine_impulse` and `agencyengine_resolve` LLM variants and their configuration schema, not content.
-  The Beta 25 content migration does not move this native-integration configuration into `manifest.json`.
+- **`external/cleanestpoison.agencyengine/settings/AgencyEngine.yaml`** declares the `agencyengine_impulse` and
+  `agencyengine_resolve` LLM variants and their Settings page schema. The filename preserves the old config name,
+  `Plugin_AgencyEngine`, so settings API calls and saved values keep the same identity. Schema changes apply on
+  SkyrimNet's next content reload without restarting the game.
+
+Players' values remain in `config/plugins/AgencyEngine/settings.yaml`. That file is never shipped, replaced,
+or deleted by AgencyEngine's deployment. Only the schema moved; its settings keys and LLM variants are unchanged.
 
 The content bundle uses the same version as AgencyEngine. `release.ps1` updates its `manifest.json` alongside
 the native project version; prompt-only changes also require a new AgencyEngine release.
@@ -332,9 +336,15 @@ the native project version; prompt-only changes also require a new AgencyEngine 
 ### Upgrading to Beta 25
 
 Replace the old AgencyEngine installation with the new archive through your mod manager. SkyrimNet no longer reads
-the old loose `SkyrimNet/prompts/` files. The staging build removes AgencyEngine's seven former prompt outputs;
-packaging refuses leftover loose content or player-owned `library/`, `overlay/`, `saves/`, and registry state.
-Neither step changes your live mod installation.
+the old loose `SkyrimNet/prompts/` files. The staging build removes AgencyEngine's seven former prompt outputs
+and its obsolete `config/plugins/AgencyEngine/manifest.yaml`, preserving any saved `settings.yaml`.
+Packaging refuses the legacy schema, player settings, leftover loose content, and player-owned `library/`,
+`overlay/`, `saves/`, and registry state. Neither step changes your live mod installation.
+
+When upgrading from AgencyEngine 0.11.0, remove only its old shipped `config/plugins/AgencyEngine/manifest.yaml`
+if your mod manager merges rather than replaces files. Do not delete that directory or its `settings.yaml`.
+If both schemas remain, SkyrimNet uses the bundled one and logs a legacy-file warning. Do not import the schema
+into an overlay: that would hide future schema updates.
 
 Do **not** use **Plugins > Import Old Content** for unmodified AgencyEngine prompts: an imported overlay copy
 shadows the shipped bundle and hides future updates. Import only personal edits you intend to keep, and revert

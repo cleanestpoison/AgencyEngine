@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(AgencyEngine VERSION 0.11.0 LANGUAGES CXX)
+project(AgencyEngine VERSION 0.11.1 LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
 # Output folder (mod-manager staging)
@@ -193,18 +193,19 @@ if(DEFINED OUTPUT_FOLDER)
             list(APPEND STATICS_DEPLOY_OUTPUTS "${dst}")
         endforeach()
         if(STATICS_DEPLOY_OUTPUTS)
-            # Beta 25 reads prompts from external content layers. Remove only
-            # our former outputs; never delete a shared SkyrimNet directory.
-            set(LEGACY_PROMPTS "")
+            # Remove only our former outputs; never delete a shared SkyrimNet
+            # directory or the player's config/plugins/AgencyEngine/settings.yaml.
+            set(LEGACY_CONTENT "")
             foreach(name base aspiration relationship activity curiosity resolved)
-                list(APPEND LEGACY_PROMPTS
+                list(APPEND LEGACY_CONTENT
                     "${OUTPUT_FOLDER}/SKSE/Plugins/SkyrimNet/prompts/agencyengine_impulse_${name}.prompt")
             endforeach()
-            list(APPEND LEGACY_PROMPTS
-                "${OUTPUT_FOLDER}/SKSE/Plugins/SkyrimNet/prompts/submodules/character_bio/7200_pending_impulse.prompt")
+            list(APPEND LEGACY_CONTENT
+                "${OUTPUT_FOLDER}/SKSE/Plugins/SkyrimNet/prompts/submodules/character_bio/7200_pending_impulse.prompt"
+                "${OUTPUT_FOLDER}/SKSE/Plugins/SkyrimNet/config/plugins/AgencyEngine/manifest.yaml")
             add_custom_target(deploy_statics ALL DEPENDS ${STATICS_DEPLOY_OUTPUTS})
             add_custom_command(TARGET deploy_statics POST_BUILD
-                COMMAND "${CMAKE_COMMAND}" -E rm -f ${LEGACY_PROMPTS}
+                COMMAND "${CMAKE_COMMAND}" -E rm -f ${LEGACY_CONTENT}
                 VERBATIM)
             message(STATUS "Statics deploy: ${STATICS_SOURCE_DIR} -> ${OUTPUT_FOLDER}")
         endif()

@@ -113,7 +113,7 @@ foreach ($scriptName in @('AgencyEngine_Bridge', 'AgencyEngine_MCM', 'AgencyEngi
     }
 }
 
-# Beta 25 content is an external layer, separate from native LLM configuration.
+# Beta 25 bundles prompts and the LLM settings schema in one external layer.
 $skyrimNet = Join-Path $modFolder 'SKSE\Plugins\SkyrimNet'
 $contentRoot = Join-Path $skyrimNet 'external\cleanestpoison.agencyengine'
 $manifestPath = Join-Path $contentRoot 'manifest.json'
@@ -132,7 +132,7 @@ if ($manifest.version -cne $Version) {
     throw "Content version $($manifest.version) differs from release version $Version — rebuild with matching versions."
 }
 foreach ($relative in @('prompts', 'library', 'overlay', 'saves', 'content-registry.json',
-                        'config\triggers', 'config\actions')) {
+                        'config\triggers', 'config\actions', 'config\plugins\AgencyEngine')) {
     $path = Join-Path $skyrimNet $relative
     if ((Test-Path -LiteralPath $path -PathType Leaf) -or
         ((Test-Path -LiteralPath $path -PathType Container) -and
@@ -144,8 +144,8 @@ $bioPrompt = Join-Path $contentRoot 'prompts\submodules\character_bio\7200_pendi
 if (-not (Test-Path -LiteralPath $bioPrompt -PathType Leaf)) {
     throw "Missing private carried-impulse bio submodule — run a build first."
 }
-if (-not (Test-Path -LiteralPath (Join-Path $skyrimNet 'config\plugins\AgencyEngine\manifest.yaml') -PathType Leaf)) {
-    throw "Missing native LLM variant manifest — run a build first."
+if (-not (Test-Path -LiteralPath (Join-Path $contentRoot 'settings\AgencyEngine.yaml') -PathType Leaf)) {
+    throw "Missing bundled AgencyEngine settings schema — run a build first."
 }
 # Every prompt the shipped defaults dispatch, not just the spine: a lens whose
 # file is missing renders as nothing and costs the whole impulse, which shows up

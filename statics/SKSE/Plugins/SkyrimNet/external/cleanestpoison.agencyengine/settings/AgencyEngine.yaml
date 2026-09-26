@@ -1,8 +1,8 @@
-# AgencyEngine — SkyrimNet plugin manifest.
+# AgencyEngine — SkyrimNet plugin settings schema.
 #
-# SkyrimNet auto-discovers plugin folders under
-# `Data/SKSE/Plugins/SkyrimNet/config/plugins/<plugin>/` and ingests this file.
-# Two purposes:
+# Shipped inside the external plugin as settings/AgencyEngine.yaml.
+# Keep this filename: it preserves Plugin_AgencyEngine and players' values in
+# config/plugins/AgencyEngine/settings.yaml. Two purposes:
 #
 #   1. `variants:` declares named LLM-config profiles. When the plugin calls
 #      SendCustomPromptToLLM(promptName, variant, ctx, cb), SkyrimNet resolves
